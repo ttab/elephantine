@@ -10,11 +10,11 @@ import (
 type ParameterSource func(ctx context.Context, name string) (string, error)
 
 func ResolveParameter(
-	c *cli.Context, src ParameterSource, name string, defaultValue string,
+	c *cli.Context, src ParameterSource, name string,
 ) (string, error) {
-	paramName := c.String(name)
+	paramName := c.String(name + "-parameter")
 	if paramName == "" {
-		return defaultValue, nil
+		return c.String(name), nil
 	}
 
 	value, err := src(c.Context, paramName)
