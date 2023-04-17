@@ -322,8 +322,8 @@ func (jl *JobLock) release() {
 	ctx, cancel := context.WithTimeout(context.Background(), jl.timeout)
 	defer cancel()
 
-	updated, err := New(jl.db).ReleaseJobLock(ctx,
-		ReleaseJobLockParams{
+	updated, err := postgres.New(jl.db).ReleaseJobLock(ctx,
+		postgres.ReleaseJobLockParams{
 			Name:   jl.name,
 			Holder: jl.identity,
 		})
@@ -346,8 +346,8 @@ func (jl *JobLock) ping() JobLockState {
 	ctx, cancel := context.WithTimeout(context.Background(), jl.timeout)
 	defer cancel()
 
-	updated, err := New(jl.db).PingJobLock(ctx,
-		PingJobLockParams{
+	updated, err := postgres.New(jl.db).PingJobLock(ctx,
+		postgres.PingJobLockParams{
 			Name:      jl.name,
 			Holder:    jl.identity,
 			Iteration: jl.iteration,
