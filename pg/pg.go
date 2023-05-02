@@ -106,3 +106,33 @@ func IsConstraintError(err error, constraint string) bool {
 
 	return pgerr.ConstraintName == constraint
 }
+
+type TransactionBeginner interface {
+	Begin(context.Context) (pgx.Tx, error)
+}
+
+func WithTX(
+	ctx context.Context, logger *slog.Logger, pool TransactionBeginner,
+	name string, fn func(tx pgx.Tx) error,
+) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	// We defer a rollback, rollback after commit won't be treated as an
+	// error.
+	defer SafeRollback(ctx, logger, tx, name)
+
+	err = fn(tx)
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to commit: %w", err)
+	}
+
+	return nil
+}
