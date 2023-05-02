@@ -25,7 +25,7 @@ func NewHealthServer(addr string) *HealthServer {
 
 	server := http.Server{
 		Addr:              addr,
-		Handler:           http.DefaultServeMux,
+		Handler:           mux,
 		ReadHeaderTimeout: 1 * time.Second,
 	}
 
