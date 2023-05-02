@@ -17,7 +17,7 @@ type LazySSM struct {
 	ssm *ssm.Client
 }
 
-func (l *LazySSM) GetValue(ctx context.Context, name string) (string, error) {
+func (l *LazySSM) GetParameterValue(ctx context.Context, name string) (string, error) {
 	if l.ssm == nil {
 		cfg, err := config.LoadDefaultConfig(ctx)
 		if err != nil {
