@@ -30,6 +30,9 @@ const (
 	LogKeyJobLockID    = "job_lock_id"
 	LogKeyState        = "state"
 	LogKeyIndex        = "index"
+	LogKeyRoute        = "route"
+	LogKeyService      = "service"
+	LogKeyMethod       = "method"
 )
 
 // SetUpLogger creates a default JSON logger and sets it as the global logger.
