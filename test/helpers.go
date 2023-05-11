@@ -63,3 +63,21 @@ func Equal[T comparable](t TestingT, want T, got T, format string, a ...any) {
 		t.Logf("success: "+format, a...)
 	}
 }
+
+// EqualDiff runs a cmp.Diff to do a deep equal check with readable diff output.
+func EqualDiff(t TestingT,
+	want any, got any,
+	format string, a ...any,
+) {
+	t.Helper()
+
+	diff := cmp.Diff(want, got)
+	if diff != "" {
+		msg := fmt.Sprintf(format, a...)
+		t.Fatalf("%s: mismatch (-want +got):\n%s", msg, diff)
+	}
+
+	if testing.Verbose() {
+		t.Logf("success: "+format, a...)
+	}
+}
