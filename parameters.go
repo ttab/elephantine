@@ -30,14 +30,14 @@ func GetParameterSource(name string) (ParameterSource, error) {
 }
 
 func ResolveParameter(
-	c *cli.Context, src ParameterSource, name string,
+	ctx context.Context, c *cli.Context, src ParameterSource, name string,
 ) (string, error) {
 	paramName := c.String(name + "-parameter")
 	if paramName == "" {
 		return c.String(name), nil
 	}
 
-	value, err := src.GetParameterValue(c.Context, paramName)
+	value, err := src.GetParameterValue(ctx, paramName)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch %q (%s) parameter value: %w",
 			paramName, name, err)
