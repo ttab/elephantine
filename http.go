@@ -140,7 +140,7 @@ func NewHTTPClientIntrumentation(
 	// histVec has no labels, making it a zero-dimensional ObserverVec.
 	histVec := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "request_duration_seconds",
+			Name:    "client_request_duration_seconds",
 			Help:    "A histogram of request latencies.",
 			Buckets: prometheus.DefBuckets,
 		},
