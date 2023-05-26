@@ -105,7 +105,7 @@ func NewHTTPClientIntrumentation(
 
 	counter := prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "client_api_requests_total",
+			Name: "client_requests_total",
 			Help: "A counter for requests from the wrapped client.",
 		},
 		[]string{"client", "code", "method"},
@@ -189,7 +189,6 @@ func NewHTTPClientIntrumentation(
 }
 
 func (ci *HTTPClientInstrumentation) Client(name string, client *http.Client) error {
-
 	transport := client.Transport
 	if transport == nil {
 		transport = http.DefaultTransport
