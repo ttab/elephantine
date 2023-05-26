@@ -11,6 +11,8 @@ import (
 const (
 	LogKeyLogLevel     = "log_level"
 	LogKeyError        = "err"
+	LogKeyErrorCode    = "err_code"
+	LogKeyErrorMeta    = "err_meta"
 	LogKeyCountMetric  = "count_metric"
 	LogKeyDocumentUUID = "document_uuid"
 	LogKeyTransaction  = "transaction"
