@@ -1,6 +1,7 @@
 package elephantine
 
 import (
+	"context"
 	"io"
 	"os"
 
@@ -91,11 +92,79 @@ func SetUpLogger(logLevel string, w io.Writer) *slog.Logger {
 		}
 	}
 
-	logger = slog.New(slog.HandlerOptions{
-		Level: &level,
-	}.NewJSONHandler(os.Stdout))
+	handler := &contextHandler{
+		h: slog.HandlerOptions{
+			Level: &level,
+		}.NewJSONHandler(os.Stdout),
+	}
+
+	logger = slog.New(handler)
 
 	slog.SetDefault(logger)
 
 	return logger
+}
+
+type ctxKey int
+
+const logCtxKey ctxKey = 1
+
+func WithLogMetadata(ctx context.Context) context.Context {
+	m := make(map[string]any)
+
+	return context.WithValue(ctx, logCtxKey, m)
+}
+
+func GetLogMetadata(ctx context.Context) map[string]any {
+	m, ok := ctx.Value(logCtxKey).(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	return m
+}
+
+func SetLogMetadata(ctx context.Context, key string, value any) {
+	m, ok := ctx.Value(logCtxKey).(map[string]any)
+	if !ok {
+		return
+	}
+
+	m[key] = value
+}
+
+type contextHandler struct {
+	h slog.Handler
+}
+
+func (h *contextHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.h.Enabled(ctx, level)
+}
+
+func (h *contextHandler) Handle(ctx context.Context, r slog.Record) error {
+	if !h.h.Enabled(ctx, r.Level) {
+		return nil
+	}
+
+	m := GetLogMetadata(ctx)
+
+	if m != nil {
+		for k, v := range m {
+			r.Add(k, v)
+		}
+	}
+
+	return h.h.Handle(ctx, r)
+}
+
+func (h *contextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	ah := h.h.WithAttrs(attrs)
+
+	return &contextHandler{h: ah}
+}
+
+func (h *contextHandler) WithGroup(name string) slog.Handler {
+	gh := h.h.WithGroup(name)
+
+	return &contextHandler{h: gh}
 }
