@@ -148,10 +148,8 @@ func (h *contextHandler) Handle(ctx context.Context, r slog.Record) error {
 
 	m := GetLogMetadata(ctx)
 
-	if m != nil {
-		for k, v := range m {
-			r.Add(k, v)
-		}
+	for k, v := range m {
+		r.Add(k, v)
 	}
 
 	return h.h.Handle(ctx, r)
