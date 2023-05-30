@@ -77,7 +77,7 @@ const (
 
 // SetUpLogger creates a default JSON logger and sets it as the global logger.
 func SetUpLogger(logLevel string, w io.Writer) *slog.Logger {
-	logger := slog.New(slog.NewJSONHandler(w))
+	logger := slog.New(slog.NewJSONHandler(w, nil))
 
 	level := slog.LevelWarn
 
@@ -93,9 +93,9 @@ func SetUpLogger(logLevel string, w io.Writer) *slog.Logger {
 	}
 
 	handler := &contextHandler{
-		h: slog.HandlerOptions{
+		h: slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 			Level: &level,
-		}.NewJSONHandler(os.Stdout),
+		}),
 	}
 
 	logger = slog.New(handler)

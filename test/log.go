@@ -15,9 +15,9 @@ func NewLogHandler(t Logger, level slog.Level) slog.Handler {
 		t: t,
 	}
 
-	h.handler = slog.HandlerOptions{
+	h.handler = slog.NewTextHandler(&h, &slog.HandlerOptions{
 		Level: level,
-	}.NewTextHandler(&h)
+	})
 
 	return &h
 }
