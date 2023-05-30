@@ -1,3 +1,6 @@
+.PHONY: generate
+generate: pg/queries.sql.go
+
 bin/sqlc: go.mod
 	GOBIN=${PWD}/bin go install github.com/kyleconroy/sqlc/cmd/sqlc
 
