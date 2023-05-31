@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+
+	"golang.org/x/exp/slog"
 )
 
 func UnmarshalFile(path string, o interface{}) error {
@@ -53,4 +56,15 @@ func UnmarshalHTTPResource(resURL string, o interface{}) error {
 	}
 
 	return nil
+}
+
+// SafeClose can be used with defer to defer the Close of a resource without
+// ignoring the error.
+func SafeClose(logger *slog.Logger, name string, c io.Closer) {
+	err := c.Close()
+	if err != nil {
+		logger.Error("failed to close",
+			LogKeyName, name,
+			LogKeyError, err.Error())
+	}
 }

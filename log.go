@@ -73,6 +73,8 @@ const (
 	LogKeyScopes = "scopes"
 	// LogKeyStatusCode is the HTTP status code used for a response.
 	LogKeyStatusCode = "status_code"
+	// LogKeyName is the name of a resource.
+	LogKeyName = "name"
 )
 
 // SetUpLogger creates a default JSON logger and sets it as the global logger.
