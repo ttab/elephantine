@@ -14,6 +14,7 @@ import (
 	"golang.org/x/exp/slog"
 )
 
+// Time converts a stdlib time.Time to a pgtype.Timestamptz.
 func Time(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{
 		Time:  t,
@@ -21,6 +22,8 @@ func Time(t time.Time) pgtype.Timestamptz {
 	}
 }
 
+// Time converts a stdlib time.Time to a pgtype.Timestamptz, but will return a
+// Timestamptz that represents a null value in the database if t is zero.
 func TimeOrNull(t time.Time) pgtype.Timestamptz {
 	if t.IsZero() {
 		return pgtype.Timestamptz{}
@@ -32,6 +35,8 @@ func TimeOrNull(t time.Time) pgtype.Timestamptz {
 	}
 }
 
+// TextOrNull returns a pgtype.Text for the given string, but will return a Text
+// value that represents null in the database if the string is empty.
 func TextOrNull(s string) pgtype.Text {
 	if s == "" {
 		return pgtype.Text{}
@@ -43,6 +48,8 @@ func TextOrNull(s string) pgtype.Text {
 	}
 }
 
+// BigintOrNull returns a pgtype.Int8 for the given value, but will return a Int8
+// value that represents null in the database if the value is zero.
 func BigintOrNull(n int64) pgtype.Int8 {
 	if n == 0 {
 		return pgtype.Int8{}
@@ -107,10 +114,14 @@ func IsConstraintError(err error, constraint string) bool {
 	return pgerr.ConstraintName == constraint
 }
 
+// TransactionBeginner is the interface for something that can start a pgx
+// transaction for use with WithTX().
 type TransactionBeginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
 
+// WithTX starts a transaction and calls the given function with it. If the
+// function returns an error or panics the transaction will be rolled back.
 func WithTX(
 	ctx context.Context, logger *slog.Logger, pool TransactionBeginner,
 	name string, fn func(tx pgx.Tx) error,

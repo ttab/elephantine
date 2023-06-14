@@ -12,14 +12,32 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-type ReadyFunc func(ctx context.Context) error
-
 // HealthServer exposes health endpoints, metrics, and PPROF endpoints.
+//
+// A HealthServer should never be publicly exposed, as that both could expose
+// sensitive information and could be used to DDOS your application.
+//
+// Example output for a request to `GET /health/ready`:
+//
+//	{
+//	  "api_liveness": {
+//	    "ok": false,
+//	    "error": "api liveness endpoint returned non-ok status: 404 Not Found"
+//	  },
+//	  "postgres": {
+//	    "ok": true
+//	  },
+//	  "s3": {
+//	    "ok": true
+//	  }
+//	}
 type HealthServer struct {
 	server         *http.Server
 	readyFunctions map[string]ReadyFunc
 }
 
+// NewHealthServer creates a new health server that will listen to the provided
+// address.
 func NewHealthServer(addr string) *HealthServer {
 	mux := http.NewServeMux()
 
@@ -47,7 +65,7 @@ func NewHealthServer(addr string) *HealthServer {
 	return &s
 }
 
-type ReadyResult struct {
+type readyResult struct {
 	Ok    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
 }
@@ -57,14 +75,14 @@ func (s *HealthServer) readyHandler(
 ) {
 	var failed bool
 
-	result := make(map[string]ReadyResult)
+	result := make(map[string]readyResult)
 
 	for name, fn := range s.readyFunctions {
 		err := fn(req.Context())
 		if err != nil {
 			failed = true
 
-			result[name] = ReadyResult{
+			result[name] = readyResult{
 				Ok:    false,
 				Error: err.Error(),
 			}
@@ -72,7 +90,7 @@ func (s *HealthServer) readyHandler(
 			continue
 		}
 
-		result[name] = ReadyResult{Ok: true}
+		result[name] = readyResult{Ok: true}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -89,10 +107,18 @@ func (s *HealthServer) readyHandler(
 	_ = enc.Encode(result)
 }
 
+// ReadyFunc is a function that will be called to determine if a service is
+// ready to recieve traffic. It should return a descriptive error that helps
+// with debugging if the underlying check fails.
+type ReadyFunc func(ctx context.Context) error
+
+// AddReadyFunction adds a function that will be called when a client requests
+// "/health/ready".
 func (s *HealthServer) AddReadyFunction(name string, fn ReadyFunc) {
 	s.readyFunctions[name] = fn
 }
 
+// Close stops the health server.
 func (s *HealthServer) Close() error {
 	err := s.server.Close()
 	if err != nil {
@@ -102,6 +128,8 @@ func (s *HealthServer) Close() error {
 	return nil
 }
 
+// ListenAndServe starts the health server, shutting it down if the context gets
+// cancelled.
 func (s *HealthServer) ListenAndServe(ctx context.Context) error {
 	return ListenAndServeContext(ctx, s.server)
 }
@@ -130,7 +158,7 @@ func LivenessReadyCheck(endpoint string) ReadyFunc {
 
 		if res.StatusCode != http.StatusOK {
 			return fmt.Errorf(
-				"api liveness endpoint returned non-ok status:: %s",
+				"api liveness endpoint returned non-ok status: %s",
 				res.Status)
 		}
 

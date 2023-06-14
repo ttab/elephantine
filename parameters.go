@@ -8,6 +8,10 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
+// ParameterSource should be implemented to support loading of configuration
+// paramaters that should be resolved at run time rather than given as
+// environment variables or flags for the application. This is useful for
+// loading secrets.
 type ParameterSource interface {
 	GetParameterValue(ctx context.Context, name string) (string, error)
 }
@@ -18,6 +22,7 @@ func (noParameterSource) GetParameterValue(_ context.Context, _ string) (string,
 	return "", errors.New("no parameter source configured")
 }
 
+// GetParameterSource returns a named parameter source.
 func GetParameterSource(name string) (ParameterSource, error) {
 	switch name {
 	case "":
@@ -29,6 +34,9 @@ func GetParameterSource(name string) (ParameterSource, error) {
 	}
 }
 
+// ResolveParameter loads the parameter from the parameter source if
+// "[name]-parameter" has been set for the cli.Context, otherwise the value of
+// "[name]" will be returned.
 func ResolveParameter(
 	ctx context.Context, c *cli.Context, src ParameterSource, name string,
 ) (string, error) {

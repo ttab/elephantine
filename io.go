@@ -1,24 +1,33 @@
 package elephantine
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 
 	"golang.org/x/exp/slog"
 )
 
-func UnmarshalFile(path string, o interface{}) error {
-	contents, err := os.ReadFile(path)
+// UnmarshalFile is a utility function for reading and unmarshalling a file
+// containing JSON. The parsing will be strict and disallow unknown fields.
+func UnmarshalFile(path string, o interface{}) (outErr error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("failed to read file: %w", err)
+		return fmt.Errorf("failed to open file: %w", err)
 	}
 
-	dec := json.NewDecoder(bytes.NewReader(contents))
+	defer func() {
+		err := f.Close()
+		if err != nil {
+			outErr = errors.Join(outErr, fmt.Errorf(
+				"failed to close file: %w", err))
+		}
+	}()
+
+	dec := json.NewDecoder(f)
 
 	dec.DisallowUnknownFields()
 
@@ -30,7 +39,9 @@ func UnmarshalFile(path string, o interface{}) error {
 	return nil
 }
 
-func UnmarshalHTTPResource(resURL string, o interface{}) error {
+// UnmarshalHTTPResource is a utility function for reading and unmarshalling a
+// HTTP resource. Uses the default HTTP client.
+func UnmarshalHTTPResource(resURL string, o interface{}) (outErr error) {
 	res, err := http.Get(resURL) //nolint:gosec
 	if err != nil {
 		return fmt.Errorf("failed to perform request: %w", err)
@@ -39,8 +50,8 @@ func UnmarshalHTTPResource(resURL string, o interface{}) error {
 	defer func() {
 		err := res.Body.Close()
 		if err != nil {
-			log.Printf("failed to close %q response body: %v",
-				resURL, err)
+			outErr = errors.Join(outErr, fmt.Errorf(
+				"failed to close response body: %w", err))
 		}
 	}()
 

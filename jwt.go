@@ -12,6 +12,7 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 )
 
+// JWTClaims defines the claims that the elephant services understand.
 type JWTClaims struct {
 	jwt.RegisteredClaims
 
@@ -20,6 +21,7 @@ type JWTClaims struct {
 	Units []string `json:"units,omitempty"`
 }
 
+// HasScope returns true if the Scope claim contains the named scope.
 func (c JWTClaims) HasScope(name string) bool {
 	scopes := strings.Split(c.Scope, " ")
 
@@ -32,6 +34,7 @@ func (c JWTClaims) HasScope(name string) bool {
 	return false
 }
 
+// HasScope returns true if the Scope claim contains any of the named scopes.
 func (c JWTClaims) HasAnyScope(names ...string) bool {
 	scopes := strings.Split(c.Scope, " ")
 
@@ -46,22 +49,29 @@ func (c JWTClaims) HasAnyScope(names ...string) bool {
 	return false
 }
 
+// Valid validates the jwt.RegisteredClaims.
 func (c JWTClaims) Valid() error {
 	return c.RegisteredClaims.Valid() //nolint:wrapcheck
 }
 
 const authInfoCtxKey ctxKey = 1
 
+// AuthInfo is used to add authentication information to a request context.
 type AuthInfo struct {
 	Claims JWTClaims
 }
 
+// ErrNoAuthorization is used to communicate that authorization was completely
+// missing, rather than being invalid, expired, or malformed.
 var ErrNoAuthorization = errors.New("no authorization provided")
 
 // TODO: this global state is obviously bad. The auth method and any caches
 // should be instantiated at application instantiation.
 var cache = ttlcache.New[string, AuthInfo]()
 
+// AuthInfoFromHeader extracts the AuthInfo from a HTTP Authorization
+// header. This is a placeholder implementation with a static JWT signing key
+// that only will work with tokens that have the `iss: test` claim.
 func AuthInfoFromHeader(key *ecdsa.PublicKey, authorization string) (*AuthInfo, error) {
 	if authorization == "" {
 		return nil, ErrNoAuthorization
@@ -105,10 +115,13 @@ func AuthInfoFromHeader(key *ecdsa.PublicKey, authorization string) (*AuthInfo, 
 	return &auth, nil
 }
 
+// SetAuthInfo creates a child context with the given authentication
+// information.
 func SetAuthInfo(ctx context.Context, info *AuthInfo) context.Context {
 	return context.WithValue(ctx, authInfoCtxKey, info)
 }
 
+// GetAuthInfo returns the authentication information for the given context.
 func GetAuthInfo(ctx context.Context) (*AuthInfo, bool) {
 	info, ok := ctx.Value(authInfoCtxKey).(*AuthInfo)
 

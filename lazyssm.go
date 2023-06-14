@@ -9,14 +9,18 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
+// NewLazySSM creates a new SSM ParameterSource.
 func NewLazySSM() *LazySSM {
 	return &LazySSM{}
 }
 
+// NewLazySSM is a SSM-backed ParameterSource implementation for
+// ResolveParameter().
 type LazySSM struct {
 	ssm *ssm.Client
 }
 
+// GetParameterValue implements ParameterSource.
 func (l *LazySSM) GetParameterValue(ctx context.Context, name string) (string, error) {
 	if l.ssm == nil {
 		cfg, err := config.LoadDefaultConfig(ctx)

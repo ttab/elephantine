@@ -8,6 +8,10 @@ import (
 	"github.com/julienschmidt/httprouter"
 )
 
+// RHandleFunc creates a httprouter.Handle from a function that can return an
+// error. If the error is a HTTPError the information it carries will be used
+// for the error response. Otherwise it will be treated as a internal server
+// eror and the error message will be sent as the response.
 func RHandleFunc(
 	fn func(http.ResponseWriter, *http.Request, httprouter.Params) error,
 ) httprouter.Handle {

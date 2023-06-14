@@ -25,6 +25,27 @@ const (
 	JobLockStateReleased = "released"
 )
 
+// JobLockOptions controls how a job lock should behave.
+type JobLockOptions struct {
+	// PingInterval controls how often the job locked should be
+	// pinged/renewed. Defaults to 10s.
+	PingInterval time.Duration
+	// StaleAfter controls after how long a time a held lock should be
+	// considered stale and other clients will start attempting to steal
+	// it. Must be longer than the ping interval. Defaults to four times the
+	// ping interval.
+	StaleAfter time.Duration
+	// CheckInterval controls how often clients should check if a held lock
+	// has become stale. Defaults to twice the ping interval.
+	CheckInterval time.Duration
+	// Timeout is the timeout that should be used for all lock
+	// operations. Must be shorter than the ping interval. Defaults to half
+	// the ping interval.
+	Timeout time.Duration
+}
+
+// JobLock helps separate processes coordinate who should be performing a
+// (background) task through postgres.
 type JobLock struct {
 	logger        *slog.Logger
 	db            *pgxpool.Pool
@@ -44,20 +65,37 @@ type JobLock struct {
 	once sync.Once
 }
 
+// NewJobLock creates a new job lock.
 func NewJobLock(
 	db *pgxpool.Pool, logger *slog.Logger, name string,
-	pingInterval, staleAfter, checkInterval, timeout time.Duration,
+	opts JobLockOptions,
 ) (*JobLock, error) {
-	if pingInterval >= staleAfter {
-		return nil, fmt.Errorf(
-			"the ping interval must be shorter than stale after, stale after: %s, ping interval %s",
-			staleAfter, pingInterval)
+	if opts.PingInterval == 0 {
+		opts.PingInterval = 10 * time.Second
 	}
 
-	if timeout >= pingInterval {
+	if opts.StaleAfter == 0 {
+		opts.StaleAfter = opts.PingInterval * 4
+	}
+
+	if opts.CheckInterval == 0 {
+		opts.CheckInterval = opts.PingInterval * 2
+	}
+
+	if opts.Timeout == 0 {
+		opts.Timeout = opts.PingInterval / 2
+	}
+
+	if opts.PingInterval >= opts.StaleAfter {
+		return nil, fmt.Errorf(
+			"the ping interval must be shorter than stale after, stale after: %s, ping interval %s",
+			opts.StaleAfter, opts.PingInterval)
+	}
+
+	if opts.Timeout >= opts.PingInterval {
 		return nil, fmt.Errorf(
 			"the timeout must be shorter than the ping interval, timeout: %s, ping interval %s",
-			timeout, pingInterval)
+			opts.Timeout, opts.PingInterval)
 	}
 
 	id := uuid.New()
@@ -78,10 +116,10 @@ func NewJobLock(
 		db:            db,
 		name:          name,
 		identity:      identity,
-		pingInterval:  pingInterval,
-		staleAfter:    staleAfter,
-		checkInterval: checkInterval,
-		timeout:       timeout,
+		pingInterval:  opts.PingInterval,
+		staleAfter:    opts.StaleAfter,
+		checkInterval: opts.CheckInterval,
+		timeout:       opts.Timeout,
 		out:           make(chan JobLockState, 1),
 		abort:         make(chan struct{}),
 		cleanedUp:     make(chan struct{}),
@@ -90,6 +128,7 @@ func NewJobLock(
 	return &jl, nil
 }
 
+// Stop releases the job lock if held and stops all polling.
 func (jl *JobLock) Stop() {
 	close(jl.abort)
 
@@ -103,6 +142,9 @@ func (jl *JobLock) run() {
 	jl.once.Do(jl.loop)
 }
 
+// RunWithContext runs the provided function once the job lock has been
+// acquired. The context provided to the function will be cancelled if the job
+// lock is lost.
 func (jl *JobLock) RunWithContext(
 	ctx context.Context,
 	fn func(ctx context.Context) error,

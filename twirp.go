@@ -8,6 +8,8 @@ import (
 	"golang.org/x/exp/slog"
 )
 
+// IsTwirpErrorCode checks if any error in the tree is a twirp.Error with the
+// given error code.
 func IsTwirpErrorCode(err error, code twirp.ErrorCode) bool {
 	if err == nil {
 		return false
@@ -22,6 +24,8 @@ func IsTwirpErrorCode(err error, code twirp.ErrorCode) bool {
 	return false
 }
 
+// LoggingHooks creaes a twirp.ServerHooks that will set log metadata for the
+// twirp service and method name, and log error responses.
 func LoggingHooks(
 	logger *slog.Logger, scopesFunc func(context.Context) string,
 ) *twirp.ServerHooks {

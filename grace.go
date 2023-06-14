@@ -11,6 +11,11 @@ import (
 	"golang.org/x/exp/slog"
 )
 
+// GracefulShutdown is a helper that can be used to listen for SIGINT and
+// SIGTERM to gracefully shut down your application.
+//
+// SIGTERM will trigger a stop, followed by quit after the specified
+// timeout. SIGINT will trigger a immediate quit.
 type GracefulShutdown struct {
 	logger  *slog.Logger
 	m       sync.Mutex
@@ -19,6 +24,8 @@ type GracefulShutdown struct {
 	quit    chan struct{}
 }
 
+// NewGracefulShutdown creates a new GracefulShutdown that will wait for
+// `timeout` between "stop" and "quit".
 func NewGracefulShutdown(logger *slog.Logger, timeout time.Duration) *GracefulShutdown {
 	gs := GracefulShutdown{
 		logger:  logger,
@@ -93,18 +100,23 @@ func (gs *GracefulShutdown) handleSignal(sig os.Signal) {
 	}
 }
 
+// Stop triggers a stop, which will trigger quit after the configured timeout.
 func (gs *GracefulShutdown) Stop() {
 	gs.safeClose(gs.stop)
 }
 
+// ShouldStop returns a channel that will be closed when stop is triggered.
 func (gs *GracefulShutdown) ShouldStop() <-chan struct{} {
 	return gs.stop
 }
 
+// ShouldQuit returns a channel that will be closed when quit is triggered.
 func (gs *GracefulShutdown) ShouldQuit() <-chan struct{} {
 	return gs.quit
 }
 
+// CancelOnStop returns a child context that will be cancelled when stop is
+// triggered.
 func (gs *GracefulShutdown) CancelOnStop(ctx context.Context) context.Context {
 	cCtx, cancel := context.WithCancel(ctx)
 
@@ -116,6 +128,8 @@ func (gs *GracefulShutdown) CancelOnStop(ctx context.Context) context.Context {
 	return cCtx
 }
 
+// CancelOnQuit returns a child context that will be cancelled when quit is
+// triggered.
 func (gs *GracefulShutdown) CancelOnQuit(ctx context.Context) context.Context {
 	cCtx, cancel := context.WithCancel(ctx)
 

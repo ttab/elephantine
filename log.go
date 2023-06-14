@@ -111,12 +111,14 @@ type ctxKey int
 
 const logCtxKey ctxKey = 1
 
+// WithLogMetadata creates a child context with a log metadata map.
 func WithLogMetadata(ctx context.Context) context.Context {
 	m := make(map[string]any)
 
 	return context.WithValue(ctx, logCtxKey, m)
 }
 
+// GetLogMetadata returns the log metatada map for the context.
 func GetLogMetadata(ctx context.Context) map[string]any {
 	m, ok := ctx.Value(logCtxKey).(map[string]any)
 	if !ok {
@@ -126,6 +128,8 @@ func GetLogMetadata(ctx context.Context) map[string]any {
 	return m
 }
 
+// SetLogMetadata sets a log metadata value on the context if it has a log
+// metadata map.
 func SetLogMetadata(ctx context.Context, key string, value any) {
 	m, ok := ctx.Value(logCtxKey).(map[string]any)
 	if !ok {

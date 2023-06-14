@@ -13,6 +13,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// HTTPError can be used to describe a non-OK response. Either as an error value
+// in a client that got an error response from a server, or in a server
+// implementation to communicate what the error response to a client should be.
 type HTTPError struct {
 	Status     string
 	StatusCode int
@@ -20,12 +23,16 @@ type HTTPError struct {
 	Body       io.Reader
 }
 
+// Error implements the error interface.
 func (e *HTTPError) Error() string {
 	return e.Status
 }
 
+// NewHTTPError creates a new HTTPError with the given status code and response
+// message.
 func NewHTTPError(statusCode int, message string) *HTTPError {
 	return &HTTPError{
+		Status:     http.StatusText(statusCode),
 		StatusCode: statusCode,
 		Header: http.Header{
 			"Content-Type": []string{"text/plain"},
@@ -34,10 +41,13 @@ func NewHTTPError(statusCode int, message string) *HTTPError {
 	}
 }
 
+// HTTPErrorf creates a HTTPError using a format string.
 func HTTPErrorf(statusCode int, format string, a ...any) *HTTPError {
 	return NewHTTPError(statusCode, fmt.Sprintf(format, a...))
 }
 
+// IsHTTPErrorWithStatus checks if the error (or any error in its tree) is a
+// HTTP error with the given status code.
 func IsHTTPErrorWithStatus(err error, status int) bool {
 	var httpErr *HTTPError
 
@@ -48,7 +58,13 @@ func IsHTTPErrorWithStatus(err error, status int) bool {
 	return httpErr.StatusCode == status
 }
 
-func HTTPErrorFromResponse(res *http.Response) *HTTPError {
+// HTTPErrorFromResponse creates a HTTPError from a response struct. This will
+// consume and create a copy of the response body, so don't use it in a scenario
+// where you expect really large error response bodies.
+//
+// If we fail to copy the response body the error will be joined with the
+// HTTPError.
+func HTTPErrorFromResponse(res *http.Response) error {
 	e := HTTPError{
 		Status:     res.Status,
 		StatusCode: res.StatusCode,
@@ -57,13 +73,22 @@ func HTTPErrorFromResponse(res *http.Response) *HTTPError {
 
 	var buf bytes.Buffer
 
-	_, _ = io.Copy(&buf, res.Body)
-
 	e.Body = &buf
+
+	_, err := io.Copy(&buf, res.Body)
+	if err != nil {
+		return errors.Join(&e,
+			fmt.Errorf("failed to read response body: %w", err))
+	}
 
 	return &e
 }
 
+// ListenAndServeContext will call ListenAndServe() for the provided server and
+// then Close() if the context is cancelled.
+//
+// Check `errors.Is(err, http.ErrServerClosed)` to differentiate between a
+// graceful server close and other errors.
 func ListenAndServeContext(ctx context.Context, server *http.Server) error {
 	go func() {
 		<-ctx.Done()
@@ -81,6 +106,7 @@ func ListenAndServeContext(ctx context.Context, server *http.Server) error {
 	return nil
 }
 
+// HTTPClientInstrumentation provides a way to instrument HTTP clients.
 type HTTPClientInstrumentation struct {
 	inFlight *prometheus.GaugeVec
 	counter  *prometheus.CounterVec
@@ -88,6 +114,8 @@ type HTTPClientInstrumentation struct {
 	histVec  *prometheus.HistogramVec
 }
 
+// NewHTTPClientIntrumentation registers a set of HTTP client metrics with the
+// provided registerer.
 func NewHTTPClientIntrumentation(
 	registerer prometheus.Registerer,
 ) (*HTTPClientInstrumentation, error) {
@@ -188,6 +216,10 @@ func NewHTTPClientIntrumentation(
 	return &ci, nil
 }
 
+// Client instruments the HTTP client transport with the standard promhttp
+// metrics. The client_requests_total, client_in_flight_requests, and
+// client_request_duration_seconds metrics will be labelled with the client
+// name.
 func (ci *HTTPClientInstrumentation) Client(name string, client *http.Client) error {
 	transport := client.Transport
 	if transport == nil {
