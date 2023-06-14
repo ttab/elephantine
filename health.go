@@ -105,3 +105,35 @@ func (s *HealthServer) Close() error {
 func (s *HealthServer) ListenAndServe(ctx context.Context) error {
 	return ListenAndServeContext(ctx, s.server)
 }
+
+// LivenessReadyCheck returns a ReadyFunc that verifies that an endpoint aswers
+// to GET requests with 200 OK.
+func LivenessReadyCheck(endpoint string) ReadyFunc {
+	return func(ctx context.Context) error {
+		req, err := http.NewRequestWithContext(
+			ctx, http.MethodGet, endpoint, nil,
+		)
+		if err != nil {
+			return fmt.Errorf(
+				"failed to create liveness check request: %w", err)
+		}
+
+		var client http.Client
+
+		res, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf(
+				"failed to perform liveness check request: %w", err)
+		}
+
+		_ = res.Body.Close()
+
+		if res.StatusCode != http.StatusOK {
+			return fmt.Errorf(
+				"api liveness endpoint returned non-ok status:: %s",
+				res.Status)
+		}
+
+		return nil
+	}
+}
