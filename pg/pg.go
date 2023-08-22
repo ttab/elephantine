@@ -14,10 +14,30 @@ import (
 	"golang.org/x/exp/slog"
 )
 
+// Date converts a stdlib time.Time to a pgtype.Date.
+func Date(t time.Time) pgtype.Date {
+	return pgtype.Date{
+		Time:  t,
+		Valid: true,
+	}
+}
+
 // Time converts a stdlib time.Time to a pgtype.Timestamptz.
 func Time(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{
 		Time:  t,
+		Valid: true,
+	}
+}
+
+// PTime converts a stdlib *time.Time to a pgtype.Timestamptz.
+func PTime(t *time.Time) pgtype.Timestamptz {
+	if t == nil {
+		return pgtype.Timestamptz{}
+	}
+
+	return pgtype.Timestamptz{
+		Time:  *t,
 		Valid: true,
 	}
 }
@@ -57,6 +77,19 @@ func BigintOrNull(n int64) pgtype.Int8 {
 
 	return pgtype.Int8{
 		Int64: n,
+		Valid: true,
+	}
+}
+
+// PInt2 returns a pgtype.Int2 for the given value, but will return a Int2 value
+// that represents null in the database if the value is nil.
+func PInt2(n *int16) pgtype.Int2 {
+	if n == nil {
+		return pgtype.Int2{}
+	}
+
+	return pgtype.Int2{
+		Int16: *n,
 		Valid: true,
 	}
 }
