@@ -24,6 +24,12 @@ const (
 	LogKeyCountMetric = "count_metric"
 	// LogKeyDocumentUUID is the UUID of a document.
 	LogKeyDocumentUUID = "document_uuid"
+	// LogKeyDocumentVersion is the version of a document.
+	LogKeyDocumentVersion = "document_version"
+	// LogKeyDocumentStatus is the status of a document.
+	LogKeyDocumentStatus = "document_status"
+	// LogKeyDocumentStatus is the id of a document status.
+	LogKeyDocumentStatusID = "document_status_id"
 	// LogKeyTransaction is the name of a transaction, usually used to
 	// identify a transaction that has failed.
 	LogKeyTransaction = "transaction"
