@@ -10,7 +10,7 @@ require (
 	github.com/google/go-cmp v0.5.9
 	github.com/google/uuid v1.3.0
 	github.com/jackc/pgx/v5 v5.4.2
-	github.com/jellydator/ttlcache/v3 v3.0.1
+	github.com/jellydator/ttlcache/v3 v3.1.0
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/kyleconroy/sqlc v1.19.1
 	github.com/prometheus/client_golang v1.16.0
@@ -48,7 +48,6 @@ require (
 	github.com/jackc/puddle/v2 v2.2.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-sqlite3 v1.14.17 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
 	github.com/pganalyze/pg_query_go/v4 v4.2.1 // indirect
