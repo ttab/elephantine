@@ -1,8 +1,14 @@
+UID := $(shell id -u)
+GID := $(shell id -g)
+
+SQL_TOOLS := ghcr.io/ttab/elephant-sqltools:v0.1.0
+
+SQLC := docker run --rm \
+	-v "${PWD}:/usr/src" -u $(UID):$(GID) \
+	$(SQL_TOOLS) sqlc
+
 .PHONY: generate
 generate: pg/queries.sql.go
 
-bin/sqlc: go.mod
-	GOBIN=${PWD}/bin go install github.com/kyleconroy/sqlc/cmd/sqlc
-
 pg/queries.sql.go: bin/sqlc pg/schema.sql pg/queries.sql
-	./bin/sqlc --experimental generate
+	$(SQLC) --experimental generate
