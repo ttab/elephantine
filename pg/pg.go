@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/ttab/elephantine"
-	"golang.org/x/exp/slog"
 )
 
 // Date converts a stdlib time.Time to a pgtype.Date.
@@ -101,7 +101,7 @@ func SafeRollback(
 ) {
 	err := tx.Rollback(context.Background())
 	if err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-		logger.ErrorCtx(ctx, "failed to roll back",
+		logger.ErrorContext(ctx, "failed to roll back",
 			elephantine.LogKeyError, err,
 			elephantine.LogKeyTransaction, txName)
 	}

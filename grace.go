@@ -2,13 +2,12 @@ package elephantine
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
-
-	"golang.org/x/exp/slog"
 )
 
 // GracefulShutdown is a helper that can be used to listen for SIGINT and

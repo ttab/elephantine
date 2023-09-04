@@ -3,9 +3,9 @@ package elephantine
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/twitchtv/twirp"
-	"golang.org/x/exp/slog"
 )
 
 // IsTwirpErrorCode checks if any error in the tree is a twirp.Error with the

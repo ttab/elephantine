@@ -5,10 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
-
-	"golang.org/x/exp/slog"
 )
 
 // UnmarshalFile is a utility function for reading and unmarshalling a file

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -13,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/ttab/elephantine"
 	"github.com/ttab/elephantine/pg/postgres"
-	"golang.org/x/exp/slog"
 )
 
 type JobLockState string

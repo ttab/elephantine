@@ -3,9 +3,8 @@ package elephantine
 import (
 	"context"
 	"io"
+	"log/slog"
 	"os"
-
-	"golang.org/x/exp/slog"
 )
 
 // Log attribute keys used throughout the application.
