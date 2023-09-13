@@ -55,6 +55,18 @@ func TimeOrNull(t time.Time) pgtype.Timestamptz {
 	}
 }
 
+// PText converts a *string to a pgtype.Text.
+func PText(s *string) pgtype.Text {
+	if s == nil {
+		return pgtype.Text{}
+	}
+
+	return pgtype.Text{
+		String: *s,
+		Valid:  true,
+	}
+}
+
 // TextOrNull returns a pgtype.Text for the given string, but will return a Text
 // value that represents null in the database if the string is empty.
 func TextOrNull(s string) pgtype.Text {
