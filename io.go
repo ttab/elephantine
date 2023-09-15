@@ -38,6 +38,33 @@ func UnmarshalFile(path string, o interface{}) (outErr error) {
 	return nil
 }
 
+// MarshalToFile is a utility function for marshalling a data structore to JSON
+// and write it to a fil. The JSON will be pretty printed.
+func MarshalFile(path string, o interface{}) (outErr error) {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+
+	defer func() {
+		err := f.Close()
+		if err != nil {
+			outErr = errors.Join(outErr, fmt.Errorf(
+				"failed to close file: %w", err))
+		}
+	}()
+
+	dec := json.NewEncoder(f)
+	dec.SetIndent("", "  ")
+
+	err = dec.Encode(o)
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+
+	return nil
+}
+
 // UnmarshalHTTPResource is a utility function for reading and unmarshalling a
 // HTTP resource. Uses the default HTTP client.
 func UnmarshalHTTPResource(resURL string, o interface{}) (outErr error) {
