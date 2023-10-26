@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 
 	"github.com/twitchtv/twirp"
 )
@@ -22,6 +23,23 @@ func IsTwirpErrorCode(err error, code twirp.ErrorCode) bool {
 	}
 
 	return false
+}
+
+// TwirpErrorToHTTPStatusCode returns the HTTP status code for the given
+// error. If the error is nil 200 will be returned, if the error isn't a
+// twirp.Error 500 will be returned.
+func TwirpErrorToHTTPStatusCode(err error) int {
+	if err == nil {
+		return http.StatusOK
+	}
+
+	var te twirp.Error
+
+	if errors.As(err, &te) {
+		return twirp.ServerHTTPStatusFromErrorCode(te.Code())
+	}
+
+	return http.StatusInternalServerError
 }
 
 // LoggingHooks creaes a twirp.ServerHooks that will set log metadata for the
