@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.18.41
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.37.5
 	github.com/golang-jwt/jwt/v4 v4.5.0
-	github.com/google/go-cmp v0.5.9
+	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.3.1
 	github.com/hashicorp/vault/api v1.10.0
 	github.com/hashicorp/vault/api/auth/kubernetes v0.5.0
