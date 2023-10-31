@@ -29,6 +29,8 @@ func GetParameterSource(name string) (ParameterSource, error) {
 		return noParameterSource{}, nil
 	case "ssm":
 		return NewLazySSM(), nil
+	case "vault":
+		return NewVault()
 	default:
 		return nil, fmt.Errorf("unknown parameter source %q", name)
 	}
