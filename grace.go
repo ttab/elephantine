@@ -26,6 +26,19 @@ type GracefulShutdown struct {
 // NewGracefulShutdown creates a new GracefulShutdown that will wait for
 // `timeout` between "stop" and "quit".
 func NewGracefulShutdown(logger *slog.Logger, timeout time.Duration) *GracefulShutdown {
+	return newGracefulShutdown(logger, timeout, true)
+}
+
+// NewManualGracefulShutdown creates a GracefulShutdown instance that doesn't
+// listen to OS signals.
+func NewManualGracefulShutdown(logger *slog.Logger, timeout time.Duration) *GracefulShutdown {
+	return newGracefulShutdown(logger, timeout, false)
+}
+
+func newGracefulShutdown(
+	logger *slog.Logger, timeout time.Duration,
+	listenToSignals bool,
+) *GracefulShutdown {
 	gs := GracefulShutdown{
 		logger:  logger,
 		signals: make(chan os.Signal, 1),
@@ -33,18 +46,20 @@ func NewGracefulShutdown(logger *slog.Logger, timeout time.Duration) *GracefulSh
 		quit:    make(chan struct{}),
 	}
 
-	signal.Notify(gs.signals, syscall.SIGINT, syscall.SIGTERM)
+	if listenToSignals {
+		signal.Notify(gs.signals, syscall.SIGINT, syscall.SIGTERM)
 
-	go func() {
-		for {
-			if !gs.poll() {
-				break
+		go func() {
+			for {
+				if !gs.poll() {
+					break
+				}
 			}
-		}
 
-		// Stop subscription.
-		signal.Stop(gs.signals)
-	}()
+			// Stop subscription.
+			signal.Stop(gs.signals)
+		}()
+	}
 
 	go func() {
 		<-gs.stop
