@@ -6,6 +6,7 @@ import (
 	"expvar"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/http/pprof" //nolint:gosec
 	"time"
 
@@ -32,6 +33,7 @@ import (
 //	  }
 //	}
 type HealthServer struct {
+	testServer     *httptest.Server
 	server         *http.Server
 	readyFunctions map[string]ReadyFunc
 }
@@ -39,18 +41,31 @@ type HealthServer struct {
 // NewHealthServer creates a new health server that will listen to the provided
 // address.
 func NewHealthServer(addr string) *HealthServer {
-	mux := http.NewServeMux()
+	s := HealthServer{
+		readyFunctions: make(map[string]ReadyFunc),
+	}
 
-	server := http.Server{
+	s.server = &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           s.setUpMux(),
 		ReadHeaderTimeout: 1 * time.Second,
 	}
 
+	return &s
+}
+
+func NewTestHealthServer() *HealthServer {
 	s := HealthServer{
-		server:         &server,
 		readyFunctions: make(map[string]ReadyFunc),
 	}
+
+	s.testServer = httptest.NewServer(s.setUpMux())
+
+	return &s
+}
+
+func (s *HealthServer) setUpMux() *http.ServeMux {
+	mux := http.NewServeMux()
 
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -62,7 +77,7 @@ func NewHealthServer(addr string) *HealthServer {
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.Handle("/health/ready", http.HandlerFunc(s.readyHandler))
 
-	return &s
+	return mux
 }
 
 type readyResult struct {
@@ -120,9 +135,14 @@ func (s *HealthServer) AddReadyFunction(name string, fn ReadyFunc) {
 
 // Close stops the health server.
 func (s *HealthServer) Close() error {
-	err := s.server.Close()
-	if err != nil {
-		return fmt.Errorf("failed to close http server: %w", err)
+	switch {
+	case s.server != nil:
+		err := s.server.Close()
+		if err != nil {
+			return fmt.Errorf("failed to close http server: %w", err)
+		}
+	case s.testServer != nil:
+		s.testServer.Close()
 	}
 
 	return nil
@@ -131,7 +151,14 @@ func (s *HealthServer) Close() error {
 // ListenAndServe starts the health server, shutting it down if the context gets
 // cancelled.
 func (s *HealthServer) ListenAndServe(ctx context.Context) error {
-	return ListenAndServeContext(ctx, s.server)
+	switch {
+	case s.server != nil:
+		return ListenAndServeContext(ctx, s.server)
+	case s.testServer != nil:
+		s.testServer.Start()
+	}
+
+	return nil
 }
 
 // LivenessReadyCheck returns a ReadyFunc that verifies that an endpoint aswers
