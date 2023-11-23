@@ -151,11 +151,10 @@ func (s *HealthServer) Close() error {
 // ListenAndServe starts the health server, shutting it down if the context gets
 // cancelled.
 func (s *HealthServer) ListenAndServe(ctx context.Context) error {
-	switch {
-	case s.server != nil:
+	if s.server != nil {
 		return ListenAndServeContext(ctx, s.server)
-	case s.testServer != nil:
-		s.testServer.Start()
+	} else {
+		<-ctx.Done()
 	}
 
 	return nil
