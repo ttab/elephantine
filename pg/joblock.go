@@ -128,6 +128,10 @@ func NewJobLock(
 	return &jl, nil
 }
 
+func (jl *JobLock) Identity() string {
+	return jl.identity
+}
+
 // Stop releases the job lock if held and stops all polling.
 func (jl *JobLock) Stop() {
 	close(jl.abort)
