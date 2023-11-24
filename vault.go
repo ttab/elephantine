@@ -111,11 +111,12 @@ func (v *Vault) authChain() error {
 		return nil
 	}
 
-	if err := v.kubernetesAuth(); err != nil {
-		return nil
+	err := v.kubernetesAuth()
+	if err != nil {
+		return fmt.Errorf("kubernetes auth failed: %w", err)
 	}
 
-	return errors.New("no valid authentication method")
+	return nil
 }
 
 func (v *Vault) kubernetesAuth() error {
