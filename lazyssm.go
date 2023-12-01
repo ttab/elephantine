@@ -23,9 +23,7 @@ type LazySSM struct {
 // GetParameterValue implements ParameterSource.
 func (l *LazySSM) GetParameterValue(ctx context.Context, name string) (string, error) {
 	if l.ssm == nil {
-		cfg, err := config.LoadDefaultConfig(ctx,
-			config.WithRegion("auto"),
-		)
+		cfg, err := config.LoadDefaultConfig(ctx)
 		if err != nil {
 			return "", fmt.Errorf("failed to load AWS SDK config: %w", err)
 		}
