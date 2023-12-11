@@ -37,6 +37,14 @@ func WithTwirpMetricsStaticTestLatency(latency time.Duration) TwirpMetricOptionF
 	}
 }
 
+// WithTwirpMetricsCustomerFunc sets a function that can be used to return the
+// customer label value for a context.
+func WithTwirpMetricsCustomerFunc(fn func(ctx context.Context) string) TwirpMetricOptionFunc {
+	return func(opts *TwirpMetricsOptions) {
+		opts.contextCustomer = fn
+	}
+}
+
 // NewTwirpMetricsHooks creates new twirp hooks enabling prometheus metrics.
 func NewTwirpMetricsHooks(opts ...TwirpMetricOptionFunc) (*twirp.ServerHooks, error) {
 	opt := TwirpMetricsOptions{
