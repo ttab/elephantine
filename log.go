@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 )
 
@@ -115,6 +116,16 @@ func SetUpLogger(logLevel string, w io.Writer) *slog.Logger {
 type ctxKey int
 
 const logCtxKey ctxKey = 1
+
+// LogMetadataMiddleware wraps an http.Handler with a middleware that adds a log
+// metadata map to the request context.
+func LogMetadataMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := WithLogMetadata(r.Context())
+
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
 
 // WithLogMetadata creates a child context with a log metadata map.
 func WithLogMetadata(ctx context.Context) context.Context {
