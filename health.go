@@ -57,8 +57,9 @@ func NewHealthServer(logger *slog.Logger, addr string) *HealthServer {
 	return &s
 }
 
-func NewTestHealthServer() *HealthServer {
+func NewTestHealthServer(logger *slog.Logger) *HealthServer {
 	s := HealthServer{
+		logger:         logger,
 		readyFunctions: make(map[string]ReadyFunc),
 	}
 
