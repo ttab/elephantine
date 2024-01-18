@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"expvar"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/http/pprof" //nolint:gosec
@@ -33,6 +34,7 @@ import (
 //	  }
 //	}
 type HealthServer struct {
+	logger         *slog.Logger
 	testServer     *httptest.Server
 	server         *http.Server
 	readyFunctions map[string]ReadyFunc
@@ -40,8 +42,9 @@ type HealthServer struct {
 
 // NewHealthServer creates a new health server that will listen to the provided
 // address.
-func NewHealthServer(addr string) *HealthServer {
+func NewHealthServer(logger *slog.Logger, addr string) *HealthServer {
 	s := HealthServer{
+		logger:         logger,
 		readyFunctions: make(map[string]ReadyFunc),
 	}
 
@@ -96,6 +99,11 @@ func (s *HealthServer) readyHandler(
 		err := fn(req.Context())
 		if err != nil {
 			failed = true
+
+			s.logger.Error("healthcheck failed",
+				LogKeyName, name,
+				LogKeyError, err,
+			)
 
 			result[name] = readyResult{
 				Ok:    false,
