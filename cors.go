@@ -8,11 +8,12 @@ import (
 )
 
 type CORSOptions struct {
-	AllowInsecure  bool
-	Hosts          []string
-	AllowedMethods []string
-	AllowedHeaders []string
-	MaxAgeSeconds  int
+	AllowInsecure          bool
+	AllowInsecureLocalhost bool
+	Hosts                  []string
+	AllowedMethods         []string
+	AllowedHeaders         []string
+	MaxAgeSeconds          int
 }
 
 func CORSMiddleware(opts CORSOptions, handler http.Handler) http.Handler {
@@ -58,14 +59,17 @@ func validOrigin(origin string, opts CORSOptions) bool {
 		return false
 	}
 
-	if !opts.AllowInsecure && oURL.Scheme != "https" {
+	allowInsec := opts.AllowInsecure ||
+		(oURL.Host == "localhost" && opts.AllowInsecureLocalhost)
+
+	if !allowInsec && oURL.Scheme != "https" {
 		return false
 	}
 
 	host := oURL.Hostname()
 
 	for _, h := range opts.Hosts {
-		if strings.HasSuffix(host, h) {
+		if host == h || strings.HasSuffix(host, "."+h) {
 			return true
 		}
 	}
