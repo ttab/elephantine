@@ -14,6 +14,18 @@ import (
 	"github.com/ttab/elephantine"
 )
 
+// PBool converts a *bool to a pgtype.Bool.
+func PBool(b *bool) pgtype.Bool {
+	if b == nil {
+		return pgtype.Bool{}
+	}
+
+	return pgtype.Bool{
+		Bool:  *b,
+		Valid: true,
+	}
+}
+
 // Date converts a stdlib time.Time to a pgtype.Date.
 func Date(t time.Time) pgtype.Date {
 	return pgtype.Date{
