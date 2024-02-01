@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -85,19 +86,38 @@ func HTTPErrorFromResponse(res *http.Response) error {
 }
 
 // ListenAndServeContext will call ListenAndServe() for the provided server and
-// then Close() if the context is cancelled.
+// then Shutdown() if the context is cancelled.
 //
 // Check `errors.Is(err, http.ErrServerClosed)` to differentiate between a
 // graceful server close and other errors.
-func ListenAndServeContext(ctx context.Context, server *http.Server) error {
+func ListenAndServeContext(
+	ctx context.Context, server *http.Server,
+	shutdownTimeout time.Duration,
+) error {
+	closed := make(chan struct{})
+
 	go func() {
+		defer close(closed)
+
 		<-ctx.Done()
 
-		_ = server.Close()
+		shtCtx, cancel := context.WithTimeout(
+			context.Background(), shutdownTimeout)
+		defer cancel()
+
+		err := server.Shutdown(shtCtx)
+		if err != nil {
+			_ = server.Close()
+		}
 	}()
 
 	err := server.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
+		// Listens and serve exits immediately when server.Shutdown() is
+		// called, wait for it to actually be closed, gracefully or
+		// otherwise.
+		<-closed
+
 		return err //nolint:wrapcheck
 	} else if err != nil {
 		return fmt.Errorf("failed to start listening: %w", err)

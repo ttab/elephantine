@@ -161,7 +161,7 @@ func (s *HealthServer) Close() error {
 // cancelled.
 func (s *HealthServer) ListenAndServe(ctx context.Context) error {
 	if s.server != nil {
-		return ListenAndServeContext(ctx, s.server)
+		return ListenAndServeContext(ctx, s.server, 5*time.Second)
 	} else {
 		<-ctx.Done()
 	}
