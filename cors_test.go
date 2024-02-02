@@ -48,6 +48,10 @@ func TestCORSMiddleware(t *testing.T) {
 			Origin:       "http://localhost",
 			ExpectStatus: http.StatusNoContent,
 		},
+		"valid_insecure_local_origin_port": {
+			Origin:       "http://localhost:5173",
+			ExpectStatus: http.StatusNoContent,
+		},
 		"invalid_origin": {
 			Origin:       "https://example.com",
 			ExpectStatus: http.StatusMethodNotAllowed,

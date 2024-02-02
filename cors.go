@@ -60,7 +60,7 @@ func validOrigin(origin string, opts CORSOptions) bool {
 	}
 
 	allowInsec := opts.AllowInsecure ||
-		(oURL.Host == "localhost" && opts.AllowInsecureLocalhost)
+		(oURL.Hostname() == "localhost" && opts.AllowInsecureLocalhost)
 
 	if !allowInsec && oURL.Scheme != "https" {
 		return false
