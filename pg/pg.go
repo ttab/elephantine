@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -67,6 +68,36 @@ func TimeOrNull(t time.Time) pgtype.Timestamptz {
 	}
 }
 
+// PUUID converts a *uuid.UUID to a pgtype.UUID.
+func PUUID(u *uuid.UUID) pgtype.UUID {
+	if u == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{
+		Bytes: *u,
+		Valid: true,
+	}
+}
+
+// UUID converts a uuid.UUID to a pgtype.UUID.
+func UUID(u uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{
+		Bytes: u,
+		Valid: true,
+	}
+}
+
+// ToUUIDPointer converts a pgtype.UUID to a *uuid.UUID.
+func ToUUIDPointer(v pgtype.UUID) *uuid.UUID {
+	if !v.Valid {
+		return nil
+	}
+
+	u := uuid.UUID(v.Bytes)
+
+	return &u
+}
+
 // PText converts a *string to a pgtype.Text.
 func PText(s *string) pgtype.Text {
 	if s == nil {
@@ -75,6 +106,14 @@ func PText(s *string) pgtype.Text {
 
 	return pgtype.Text{
 		String: *s,
+		Valid:  true,
+	}
+}
+
+// Text converts a string to a pgtype.Text.
+func Text(s string) pgtype.Text {
+	return pgtype.Text{
+		String: s,
 		Valid:  true,
 	}
 }
