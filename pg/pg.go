@@ -27,6 +27,18 @@ func PBool(b *bool) pgtype.Bool {
 	}
 }
 
+// PInt32 converts a *bool to a pgtype.Int4.
+func PInt32(n *int32) pgtype.Int4 {
+	if n == nil {
+		return pgtype.Int4{}
+	}
+
+	return pgtype.Int4{
+		Int32: *n,
+		Valid: true,
+	}
+}
+
 // Date converts a stdlib time.Time to a pgtype.Date.
 func Date(t time.Time) pgtype.Date {
 	return pgtype.Date{
