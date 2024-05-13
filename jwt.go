@@ -69,9 +69,10 @@ type AuthInfoParser struct {
 	scopePrefix *regexp.Regexp
 }
 
-type ValidationClaims struct {
-	Audience string
-	Issuer   string
+type AuthInfoParserOptions struct {
+	Audience    string
+	Issuer      string
+	ScopePrefix string
 }
 
 func ScopePrefixRegexp(prefix string) *regexp.Regexp {
@@ -81,35 +82,31 @@ func ScopePrefixRegexp(prefix string) *regexp.Regexp {
 	return regexp.MustCompile(fmt.Sprintf("\\b%s", regexp.QuoteMeta(prefix)))
 }
 
-func NewAuthInfoParser(ctx context.Context, jwksUrl string, validation ValidationClaims, scopePrefix string) (*AuthInfoParser, error) {
+func newAuthInfoParser(keyfunc jwt.Keyfunc, opts AuthInfoParserOptions) *AuthInfoParser {
+	return &AuthInfoParser{
+		keyfunc: keyfunc,
+		validator: jwt.NewValidator(
+			jwt.WithLeeway(5*time.Second),
+			jwt.WithIssuer(opts.Issuer),
+			jwt.WithAudience(opts.Audience),
+		),
+		cache:       ttlcache.New[string, AuthInfo](),
+		scopePrefix: ScopePrefixRegexp(opts.ScopePrefix),
+	}
+}
+
+func NewJWKSAuthInfoParser(ctx context.Context, jwksUrl string, opts AuthInfoParserOptions) (*AuthInfoParser, error) {
 	k, err := keyfunc.NewDefaultCtx(ctx, []string{jwksUrl})
 	if err != nil {
 		return nil, fmt.Errorf("could not create keyfunc: %w", err)
 	}
-	return &AuthInfoParser{
-		keyfunc: k.Keyfunc,
-		validator: jwt.NewValidator(
-			jwt.WithLeeway(5*time.Second),
-			jwt.WithIssuer(validation.Issuer),
-			jwt.WithAudience(validation.Audience),
-		),
-		cache:       ttlcache.New[string, AuthInfo](),
-		scopePrefix: ScopePrefixRegexp(scopePrefix),
-	}, nil
+	return newAuthInfoParser(k.Keyfunc, opts), nil
 }
 
-func NewDummyAuthInfoParser(key ecdsa.PublicKey, scopePrefix string) *AuthInfoParser {
-	return &AuthInfoParser{
-		keyfunc: func(t *jwt.Token) (interface{}, error) {
-			return &key, nil
-		},
-		validator: jwt.NewValidator(
-			jwt.WithLeeway(5*time.Second),
-			jwt.WithIssuer("test"),
-		),
-		cache:       ttlcache.New[string, AuthInfo](),
-		scopePrefix: ScopePrefixRegexp(scopePrefix),
-	}
+func NewStaticAuthInfoParser(key ecdsa.PublicKey, opts AuthInfoParserOptions) *AuthInfoParser {
+	return newAuthInfoParser(func(t *jwt.Token) (interface{}, error) {
+		return &key, nil
+	}, opts)
 }
 
 // AuthInfoFromHeader extracts the AuthInfo from a HTTP Authorization

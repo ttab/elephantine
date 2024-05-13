@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/ttab/elephantine"
@@ -16,7 +17,7 @@ func TestHandleTokenWithoutExpiry(t *testing.T) {
 	jwtKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	test.Must(t, err, "create signing key")
 
-	parser := elephantine.NewDummyAuthInfoParser(jwtKey.PublicKey, "")
+	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.AuthInfoParserOptions{})
 	token := jwt.NewWithClaims(jwt.SigningMethodES384, elephantine.JWTClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: "test",
@@ -26,14 +27,16 @@ func TestHandleTokenWithoutExpiry(t *testing.T) {
 	ss, err := token.SignedString(jwtKey)
 	test.Must(t, err, "sign JWT token")
 
-	_, err = parser.AuthInfoFromHeader(fmt.Sprintf("Bearer %s", ss))
+	_, _ = parser.AuthInfoFromHeader(fmt.Sprintf("Bearer %s", ss))
 }
 
 func TestVerifyIssuer(t *testing.T) {
 	jwtKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	test.Must(t, err, "create signing key")
 
-	parser := elephantine.NewDummyAuthInfoParser(jwtKey.PublicKey, "")
+	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.AuthInfoParserOptions{
+		Issuer: "test",
+	})
 	token := jwt.NewWithClaims(jwt.SigningMethodES384, elephantine.JWTClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: "myrandomissuer",
@@ -44,14 +47,35 @@ func TestVerifyIssuer(t *testing.T) {
 	test.Must(t, err, "sign JWT token")
 
 	_, err = parser.AuthInfoFromHeader(fmt.Sprintf("Bearer %s", ss))
-	test.MustNot(t, err, "parse token")
+	test.MustNot(t, err, "validate token with wrong issuer")
+}
+
+func TestVerifyExpiry(t *testing.T) {
+	jwtKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	test.Must(t, err, "create signing key")
+
+	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.AuthInfoParserOptions{})
+
+	token := jwt.NewWithClaims(jwt.SigningMethodES384, elephantine.JWTClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(-10 * time.Second)),
+		},
+	})
+
+	ss, err := token.SignedString(jwtKey)
+	test.Must(t, err, "sign JWT token")
+
+	_, err = parser.AuthInfoFromHeader(fmt.Sprintf("Bearer %s", ss))
+	test.MustNot(t, err, "validate expired token")
 }
 
 func TestAuthInfoParsesScopes(t *testing.T) {
 	jwtKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	test.Must(t, err, "create signing key")
 
-	parser := elephantine.NewDummyAuthInfoParser(jwtKey.PublicKey, "")
+	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.AuthInfoParserOptions{
+		Issuer: "test",
+	})
 	token := jwt.NewWithClaims(jwt.SigningMethodES384, elephantine.JWTClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: "test",
@@ -73,12 +97,10 @@ func TestAuthInfoStripsScopePrefix(t *testing.T) {
 	jwtKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	test.Must(t, err, "create signing key")
 
-	parser := elephantine.NewDummyAuthInfoParser(jwtKey.PublicKey, "test_")
+	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.AuthInfoParserOptions{
+		ScopePrefix: "test_",
+	})
 	token := jwt.NewWithClaims(jwt.SigningMethodES384, elephantine.JWTClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer: "test",
-		},
-		Name:  "jolifanto",
 		Scope: "test_doc_read test_doc_write",
 	})
 
