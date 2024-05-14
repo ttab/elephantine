@@ -27,7 +27,8 @@ func TestHandleTokenWithoutExpiry(t *testing.T) {
 	ss, err := token.SignedString(jwtKey)
 	test.Must(t, err, "sign JWT token")
 
-	_, _ = parser.AuthInfoFromHeader(fmt.Sprintf("Bearer %s", ss))
+	_, err = parser.AuthInfoFromHeader(fmt.Sprintf("Bearer %s", ss))
+	test.Must(t, err, "parse token")
 }
 
 func TestVerifyIssuer(t *testing.T) {
