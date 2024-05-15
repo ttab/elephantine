@@ -5,10 +5,12 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/MicahParks/keyfunc/v3"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/jellydator/ttlcache/v3"
 )
 
@@ -49,11 +51,6 @@ func (c JWTClaims) HasAnyScope(names ...string) bool {
 	return false
 }
 
-// Valid validates the jwt.RegisteredClaims.
-func (c JWTClaims) Valid() error {
-	return c.RegisteredClaims.Valid() //nolint:wrapcheck
-}
-
 const authInfoCtxKey ctxKey = 1
 
 // AuthInfo is used to add authentication information to a request context.
@@ -65,14 +62,57 @@ type AuthInfo struct {
 // missing, rather than being invalid, expired, or malformed.
 var ErrNoAuthorization = errors.New("no authorization provided")
 
-// TODO: this global state is obviously bad. The auth method and any caches
-// should be instantiated at application instantiation.
-var cache = ttlcache.New[string, AuthInfo]()
+type AuthInfoParser struct {
+	keyfunc     jwt.Keyfunc
+	validator   *jwt.Validator
+	cache       *ttlcache.Cache[string, AuthInfo]
+	scopePrefix *regexp.Regexp
+}
+
+type AuthInfoParserOptions struct {
+	Audience    string
+	Issuer      string
+	ScopePrefix string
+}
+
+func ScopePrefixRegexp(prefix string) *regexp.Regexp {
+	if prefix == "" {
+		return nil
+	}
+	return regexp.MustCompile(fmt.Sprintf("\\b%s", regexp.QuoteMeta(prefix)))
+}
+
+func newAuthInfoParser(keyfunc jwt.Keyfunc, opts AuthInfoParserOptions) *AuthInfoParser {
+	return &AuthInfoParser{
+		keyfunc: keyfunc,
+		validator: jwt.NewValidator(
+			jwt.WithLeeway(5*time.Second),
+			jwt.WithIssuer(opts.Issuer),
+			jwt.WithAudience(opts.Audience),
+		),
+		cache:       ttlcache.New[string, AuthInfo](),
+		scopePrefix: ScopePrefixRegexp(opts.ScopePrefix),
+	}
+}
+
+func NewJWKSAuthInfoParser(ctx context.Context, jwksUrl string, opts AuthInfoParserOptions) (*AuthInfoParser, error) {
+	k, err := keyfunc.NewDefaultCtx(ctx, []string{jwksUrl})
+	if err != nil {
+		return nil, fmt.Errorf("could not create keyfunc: %w", err)
+	}
+	return newAuthInfoParser(k.Keyfunc, opts), nil
+}
+
+func NewStaticAuthInfoParser(key ecdsa.PublicKey, opts AuthInfoParserOptions) *AuthInfoParser {
+	return newAuthInfoParser(func(t *jwt.Token) (interface{}, error) {
+		return &key, nil
+	}, opts)
+}
 
 // AuthInfoFromHeader extracts the AuthInfo from a HTTP Authorization
 // header. This is a placeholder implementation with a static JWT signing key
 // that only will work with tokens that have the `iss: test` claim.
-func AuthInfoFromHeader(key *ecdsa.PublicKey, authorization string) (*AuthInfo, error) {
+func (p *AuthInfoParser) AuthInfoFromHeader(authorization string) (*AuthInfo, error) {
 	if authorization == "" {
 		return nil, ErrNoAuthorization
 	}
@@ -84,7 +124,7 @@ func AuthInfoFromHeader(key *ecdsa.PublicKey, authorization string) (*AuthInfo, 
 		return nil, errors.New("only bearer tokens are supported")
 	}
 
-	item := cache.Get(token)
+	item := p.cache.Get(token)
 	if item != nil && !item.IsExpired() {
 		value := item.Value()
 
@@ -93,26 +133,38 @@ func AuthInfoFromHeader(key *ecdsa.PublicKey, authorization string) (*AuthInfo, 
 
 	var claims JWTClaims
 
-	_, err := jwt.ParseWithClaims(token, &claims,
-		func(t *jwt.Token) (interface{}, error) {
-			return key, nil
-		},
-		jwt.WithValidMethods([]string{jwt.SigningMethodES384.Name}))
+	_, err := jwt.ParseWithClaims(token, &claims, p.keyfunc,
+		jwt.WithValidMethods([]string{
+			jwt.SigningMethodRS256.Name,
+			jwt.SigningMethodES384.Name,
+		}))
 	if err != nil {
 		return nil, fmt.Errorf("invalid token: %w", err)
 	}
 
-	if claims.Issuer != "test" {
-		return nil, fmt.Errorf("invalid issuer %q", claims.Issuer)
+	err = p.Valid(claims)
+	if err != nil {
+		return nil, fmt.Errorf("invalid claims: %w", err)
+	}
+
+	if p.scopePrefix != nil {
+		claims.Scope = p.scopePrefix.ReplaceAllLiteralString(claims.Scope, "")
 	}
 
 	auth := AuthInfo{
 		Claims: claims,
 	}
 
-	cache.Set(token, auth, time.Until(auth.Claims.ExpiresAt.Time))
+	if auth.Claims.ExpiresAt != nil {
+		p.cache.Set(token, auth, time.Until(auth.Claims.ExpiresAt.Time))
+	}
 
 	return &auth, nil
+}
+
+// Valid validates the jwt.RegisteredClaims.
+func (p *AuthInfoParser) Valid(c JWTClaims) error {
+	return p.validator.Validate(c.RegisteredClaims)
 }
 
 // SetAuthInfo creates a child context with the given authentication
