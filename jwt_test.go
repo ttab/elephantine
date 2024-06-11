@@ -124,6 +124,7 @@ func TestAuthInfoUnitMapping(t *testing.T) {
 			"external://resource/thing",
 			"/unqualified-name",
 			"core://unit/fqn",
+			"with-params?id=123#and-hash",
 		},
 	})
 
@@ -137,5 +138,6 @@ func TestAuthInfoUnitMapping(t *testing.T) {
 		"external://resource/thing",
 		"core://unit/unqualified-name",
 		"core://unit/fqn",
+		"core://unit/with-params?id=123#and-hash",
 	}, info.Claims.Units, "get the expected units")
 }

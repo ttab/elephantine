@@ -161,7 +161,7 @@ func (p *AuthInfoParser) AuthInfoFromHeader(authorization string) (*AuthInfo, er
 		}
 
 		if parsed.Scheme == "" {
-			claims.Units[i] = unitBase.JoinPath(parsed.Path).String()
+			claims.Units[i] = unitBase.ResolveReference(parsed).String()
 		}
 	}
 
