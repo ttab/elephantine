@@ -113,3 +113,29 @@ func TestAuthInfoStripsScopePrefix(t *testing.T) {
 
 	test.Equal(t, "doc_read doc_write", info.Claims.Scope, "strip scope prefix")
 }
+
+func TestAuthInfoUnitMapping(t *testing.T) {
+	jwtKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	test.Must(t, err, "create signing key")
+
+	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.AuthInfoParserOptions{})
+	token := jwt.NewWithClaims(jwt.SigningMethodES384, elephantine.JWTClaims{
+		Units: []string{
+			"external://resource/thing",
+			"/unqualified-name",
+			"core://unit/fqn",
+		},
+	})
+
+	ss, err := token.SignedString(jwtKey)
+	test.Must(t, err, "sign JWT token")
+
+	info, err := parser.AuthInfoFromHeader(fmt.Sprintf("Bearer %s", ss))
+	test.Must(t, err, "parse token")
+
+	test.EqualDiff(t, []string{
+		"external://resource/thing",
+		"core://unit/unqualified-name",
+		"core://unit/fqn",
+	}, info.Claims.Units, "get the expected units")
+}

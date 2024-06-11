@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -145,6 +146,23 @@ func (p *AuthInfoParser) AuthInfoFromHeader(authorization string) (*AuthInfo, er
 	err = p.Valid(claims)
 	if err != nil {
 		return nil, fmt.Errorf("invalid claims: %w", err)
+	}
+
+	unitBase := &url.URL{
+		Scheme: "core",
+		Host:   "unit",
+	}
+
+	for i, u := range claims.Units {
+		parsed, err := url.Parse(u)
+		if err != nil {
+			return nil, fmt.Errorf("invalid unit claim %q: %w",
+				u, err)
+		}
+
+		if parsed.Scheme == "" {
+			claims.Units[i] = unitBase.JoinPath(parsed.Path).String()
+		}
 	}
 
 	if p.scopePrefix != nil {
