@@ -19,7 +19,7 @@ import (
 type JWTClaims struct {
 	jwt.RegisteredClaims
 
-	OriginalSub string `json:"_original_sub"`
+	OriginalSub string `json:"-"`
 
 	Name            string   `json:"sub_name"`
 	Scope           string   `json:"scope"`
