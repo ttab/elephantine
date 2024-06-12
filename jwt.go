@@ -19,9 +19,12 @@ import (
 type JWTClaims struct {
 	jwt.RegisteredClaims
 
-	Name  string   `json:"sub_name"`
-	Scope string   `json:"scope"`
-	Units []string `json:"units,omitempty"`
+	OriginalSub string `json:"-"`
+
+	Name            string   `json:"sub_name"`
+	Scope           string   `json:"scope"`
+	AuthorizedParty string   `json:"azp"`
+	Units           []string `json:"units,omitempty"`
 }
 
 // HasScope returns true if the Scope claim contains the named scope.
@@ -169,6 +172,14 @@ func (p *AuthInfoParser) AuthInfoFromHeader(authorization string) (*AuthInfo, er
 		claims.Scope = p.scopePrefix.ReplaceAllLiteralString(claims.Scope, "")
 	}
 
+	sub, err := claimsToSubject(claims)
+	if err != nil {
+		return nil, err
+	}
+
+	claims.OriginalSub = claims.Subject
+	claims.Subject = sub
+
 	auth := AuthInfo{
 		Claims: claims,
 	}
@@ -178,6 +189,32 @@ func (p *AuthInfoParser) AuthInfoFromHeader(authorization string) (*AuthInfo, er
 	}
 
 	return &auth, nil
+}
+
+var (
+	appURI  = url.URL{Scheme: "core", Host: "application"}
+	userURI = url.URL{Scheme: "core", Host: "user"}
+)
+
+func claimsToSubject(claims JWTClaims) (string, error) {
+	parsedSub, err := url.Parse(claims.Subject)
+	if err != nil {
+		return "", fmt.Errorf("invalid sub claim: %w", err)
+	}
+
+	// This is a fully qualified subject URI, return it as-is.
+	if parsedSub.Scheme != "" {
+		return claims.Subject, nil
+	}
+
+	// This is an application token, return
+	// "core://application/{.AuthorizedParty}".
+	if claims.AuthorizedParty != "" {
+		return appURI.JoinPath(claims.AuthorizedParty).String(), nil
+	}
+
+	// Assume user URI and return "core://user/{.Subject}".
+	return userURI.JoinPath(claims.Subject).String(), nil
 }
 
 // Valid validates the jwt.RegisteredClaims.
