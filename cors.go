@@ -23,17 +23,16 @@ func CORSMiddleware(opts CORSOptions, handler http.Handler) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		accessMethod := r.Header.Get("Access-Control-Request-Method")
+		origin := r.Header.Get("Origin")
+		header := w.Header()
 
 		if r.Method == http.MethodOptions && accessMethod != "" {
-			origin := r.Header.Get("Origin")
 
 			if !validOrigin(origin, opts) {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 
 				return
 			}
-
-			header := w.Header()
 
 			header.Set("Access-Control-Allow-Methods",
 				strings.Join(opts.AllowedMethods, ","))
@@ -47,6 +46,11 @@ func CORSMiddleware(opts CORSOptions, handler http.Handler) http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 
 			return
+		}
+
+		if origin != "" && validOrigin(origin, opts) {
+			header.Set("Access-Control-Allow-Origin", origin)
+			header.Set("Vary", "Origin")
 		}
 
 		handler.ServeHTTP(w, r)
