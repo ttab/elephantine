@@ -1,6 +1,6 @@
 module github.com/ttab/elephantine
 
-go 1.22.4
+go 1.23.1
 
 require (
 	github.com/MicahParks/keyfunc/v3 v3.3.3
@@ -18,6 +18,7 @@ require (
 	github.com/prometheus/client_golang v1.19.1
 	github.com/twitchtv/twirp v8.1.3+incompatible
 	github.com/urfave/cli/v2 v2.27.2
+	golang.org/x/oauth2 v0.16.0
 	google.golang.org/protobuf v1.34.2
 )
 
@@ -39,6 +40,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.4 // indirect
 	github.com/go-jose/go-jose/v4 v4.0.1 // indirect
+	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
@@ -67,4 +69,5 @@ require (
 	golang.org/x/sys v0.20.0 // indirect
 	golang.org/x/text v0.15.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
+	google.golang.org/appengine v1.6.7 // indirect
 )
