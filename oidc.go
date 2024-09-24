@@ -89,6 +89,11 @@ func OpenIDConnectParameters() []cli.Flag {
 			EnvVars: []string{"OIDC_CONFIG_PARAMETER"},
 		},
 		&cli.StringFlag{
+			Name:    "jwt-audience",
+			Usage:   "String to validate the aud claim against",
+			EnvVars: []string{"JWT_AUDIENCE"},
+		},
+		&cli.StringFlag{
 			Name:    "client-id",
 			EnvVars: []string{"CLIENT_ID"},
 		},
@@ -117,6 +122,8 @@ func AuthenticationConfigFromCLI(
 	c *cli.Context, paramSource ParameterSource,
 	scopes []string,
 ) (*AuthenticationConfig, error) {
+	var conf AuthenticationConfig
+
 	oidcConfigURL, err := ResolveParameter(
 		c.Context, c, paramSource, "oidc-config")
 	if err != nil {
@@ -128,39 +135,46 @@ func AuthenticationConfigFromCLI(
 		return nil, fmt.Errorf("load OIDC config from %q: %w", oidcConfigURL, err)
 	}
 
-	clientID, err := ResolveParameter(
-		c.Context, c, paramSource, "client-id",
-	)
-	if err != nil {
-		return nil, fmt.Errorf("resolve client id parameter: %w", err)
+	conf.OIDCConfig = oidcConfig
+
+	if len(scopes) != 0 {
+		clientID, err := ResolveParameter(
+			c.Context, c, paramSource, "client-id",
+		)
+		if err != nil {
+			return nil, fmt.Errorf("resolve client id parameter: %w", err)
+		}
+
+		clientSecret, err := ResolveParameter(
+			c.Context, c, paramSource, "client-secret",
+		)
+		if err != nil {
+			return nil, fmt.Errorf("resolve client secret parameter: %w", err)
+		}
+
+		clientCredentialsConf := clientcredentials.Config{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			TokenURL:     oidcConfig.TokenEndpoint,
+			Scopes:       scopes,
+		}
+
+		conf.TokenSource = clientCredentialsConf.TokenSource(c.Context)
 	}
 
-	clientSecret, err := ResolveParameter(
-		c.Context, c, paramSource, "client-secret",
-	)
-	if err != nil {
-		return nil, fmt.Errorf("resolve client secret parameter: %w", err)
-	}
-
-	clientCredentialsConf := clientcredentials.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		TokenURL:     oidcConfig.TokenEndpoint,
-		Scopes:       scopes,
-	}
-
-	tokenSource := clientCredentialsConf.TokenSource(c.Context)
+	audience := c.String("jwt-audience")
 
 	authInfoParser, err := NewJWKSAuthInfoParser(
 		c.Context, oidcConfig.JwksURI,
-		AuthInfoParserOptions{})
+		AuthInfoParserOptions{
+			Issuer:   oidcConfig.Issuer,
+			Audience: audience,
+		})
 	if err != nil {
 		return nil, fmt.Errorf("retrieve JWKS: %w", err)
 	}
 
-	return &AuthenticationConfig{
-		OIDCConfig:  oidcConfig,
-		TokenSource: tokenSource,
-		AuthParser:  authInfoParser,
-	}, nil
+	conf.AuthParser = authInfoParser
+
+	return &conf, nil
 }
