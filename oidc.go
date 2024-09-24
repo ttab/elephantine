@@ -94,6 +94,11 @@ func OpenIDConnectParameters() []cli.Flag {
 			EnvVars: []string{"JWT_AUDIENCE"},
 		},
 		&cli.StringFlag{
+			Name:    "jwt-scope-prefix",
+			Usage:   "Prefix to strip from JWT scopes",
+			EnvVars: []string{"JWT_SCOPE_PREFIX"},
+		},
+		&cli.StringFlag{
 			Name:    "client-id",
 			EnvVars: []string{"CLIENT_ID"},
 		},
@@ -163,12 +168,14 @@ func AuthenticationConfigFromCLI(
 	}
 
 	audience := c.String("jwt-audience")
+	prefix := c.String("jwt-scope-prefix")
 
 	authInfoParser, err := NewJWKSAuthInfoParser(
 		c.Context, oidcConfig.JwksURI,
 		AuthInfoParserOptions{
-			Issuer:   oidcConfig.Issuer,
-			Audience: audience,
+			Issuer:      oidcConfig.Issuer,
+			Audience:    audience,
+			ScopePrefix: prefix,
 		})
 	if err != nil {
 		return nil, fmt.Errorf("retrieve JWKS: %w", err)
