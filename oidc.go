@@ -78,7 +78,16 @@ func OpenIDConnectConfigFromURL(
 	return &conf, nil
 }
 
+// OpenIDConnectParameters
+//
+// Deprecated: Use AuthenticationCLIFlags() instead.
 func OpenIDConnectParameters() []cli.Flag {
+	return AuthenticationCLIFlags()
+}
+
+// AuthenticationCLIFlags returns all the CLI flags that are needed to later
+// call AuthenticationConfigFromCLI with the resulting cli.Context.
+func AuthenticationCLIFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{
 			Name:    "oidc-config",
