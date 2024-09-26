@@ -1,7 +1,10 @@
 package elephantine
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/urfave/cli/v2"
 	"golang.org/x/oauth2"
@@ -130,13 +133,24 @@ type AuthenticationConfig struct {
 	OIDCConfig  *OpenIDConnectConfig
 	TokenSource oauth2.TokenSource
 	AuthParser  *AuthInfoParser
+
+	c           *cli.Context
+	paramSource ParameterSource
+
+	m            sync.Mutex
+	credErr      error
+	clientID     string
+	clientSecret string
 }
 
 func AuthenticationConfigFromCLI(
 	c *cli.Context, paramSource ParameterSource,
 	scopes []string,
 ) (*AuthenticationConfig, error) {
-	var conf AuthenticationConfig
+	conf := AuthenticationConfig{
+		c:           c,
+		paramSource: paramSource,
+	}
 
 	oidcConfigURL, err := ResolveParameter(
 		c.Context, c, paramSource, "oidc-config")
@@ -152,28 +166,12 @@ func AuthenticationConfigFromCLI(
 	conf.OIDCConfig = oidcConfig
 
 	if len(scopes) != 0 {
-		clientID, err := ResolveParameter(
-			c.Context, c, paramSource, "client-id",
-		)
+		ts, err := conf.NewTokenSource(c.Context, scopes)
 		if err != nil {
-			return nil, fmt.Errorf("resolve client id parameter: %w", err)
+			return nil, fmt.Errorf("create token source: %w", err)
 		}
 
-		clientSecret, err := ResolveParameter(
-			c.Context, c, paramSource, "client-secret",
-		)
-		if err != nil {
-			return nil, fmt.Errorf("resolve client secret parameter: %w", err)
-		}
-
-		clientCredentialsConf := clientcredentials.Config{
-			ClientID:     clientID,
-			ClientSecret: clientSecret,
-			TokenURL:     oidcConfig.TokenEndpoint,
-			Scopes:       scopes,
-		}
-
-		conf.TokenSource = clientCredentialsConf.TokenSource(c.Context)
+		conf.TokenSource = ts
 	}
 
 	audience := c.String("jwt-audience")
@@ -193,4 +191,69 @@ func AuthenticationConfigFromCLI(
 	conf.AuthParser = authInfoParser
 
 	return &conf, nil
+}
+
+func (conf *AuthenticationConfig) NewTokenSource(
+	ctx context.Context, scopes []string,
+) (oauth2.TokenSource, error) {
+	err := conf.ensureCredentials(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	clientCredentialsConf := clientcredentials.Config{
+		ClientID:     conf.clientID,
+		ClientSecret: conf.clientSecret,
+		TokenURL:     conf.OIDCConfig.TokenEndpoint,
+		Scopes:       scopes,
+	}
+
+	return clientCredentialsConf.TokenSource(ctx), nil
+}
+
+func (conf *AuthenticationConfig) ensureCredentials(ctx context.Context) error {
+	conf.m.Lock()
+	defer conf.m.Unlock()
+
+	if conf.credErr != nil {
+		return conf.credErr
+	}
+
+	err := conf.resolveCredentials(ctx)
+	if err != nil {
+		conf.credErr = fmt.Errorf("resolve credentials: %w", err)
+
+		return conf.credErr
+	}
+
+	return nil
+}
+
+func (conf *AuthenticationConfig) resolveCredentials(ctx context.Context) error {
+	clientID, err := ResolveParameter(
+		ctx, conf.c, conf.paramSource, "client-id",
+	)
+	if err != nil {
+		return fmt.Errorf("resolve client id parameter: %w", err)
+	}
+
+	if clientID == "" {
+		return errors.New("missing client ID")
+	}
+
+	clientSecret, err := ResolveParameter(
+		ctx, conf.c, conf.paramSource, "client-secret",
+	)
+	if err != nil {
+		return fmt.Errorf("resolve client secret parameter: %w", err)
+	}
+
+	if clientSecret == "" {
+		return errors.New("missing client secret")
+	}
+
+	conf.clientID = clientID
+	conf.clientSecret = clientSecret
+
+	return nil
 }
