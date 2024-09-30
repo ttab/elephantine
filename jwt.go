@@ -59,6 +59,7 @@ const authInfoCtxKey ctxKey = 1
 
 // AuthInfo is used to add authentication information to a request context.
 type AuthInfo struct {
+	Token  string
 	Claims JWTClaims
 }
 
@@ -181,6 +182,7 @@ func (p *AuthInfoParser) AuthInfoFromHeader(authorization string) (*AuthInfo, er
 	claims.Subject = sub
 
 	auth := AuthInfo{
+		Token:  token,
 		Claims: claims,
 	}
 
