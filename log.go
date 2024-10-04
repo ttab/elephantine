@@ -46,6 +46,8 @@ const (
 	// LogKeyDelay can be used to communicate the delay when logging
 	// information about retry attempts and backoff delays.
 	LogKeyDelay = "delay"
+	// LogKeyRetries can be used to communicate a retry attempt counter.
+	LogKeyAttempts = "attempts"
 	// LogKeyBucket is used to log a S3 bucket name.
 	LogKeyBucket = "bucket"
 	// LogKeyObjectKey is used to log a S3 object key.
