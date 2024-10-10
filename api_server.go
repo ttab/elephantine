@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/twitchtv/twirp"
 	"golang.org/x/sync/errgroup"
 )
@@ -125,14 +126,21 @@ func (s *APIServer) ListenAndServe(ctx context.Context) error {
 }
 
 func NewDefaultServiceOptions(
-	logger *slog.Logger, parser *AuthInfoParser,
-) ServiceOptions {
+	logger *slog.Logger,
+	parser *AuthInfoParser,
+	reg prometheus.Registerer,
+) (ServiceOptions, error) {
 	var so ServiceOptions
 
 	so.SetJWTValidation(parser, true)
 	so.AddLoggingHooks(logger, nil)
 
-	return so
+	err := so.AddMetricsHooks(reg)
+	if err != nil {
+		return ServiceOptions{}, fmt.Errorf("set up metrics: %w", err)
+	}
+
+	return so, nil
 }
 
 type ServiceOptions struct {
@@ -157,6 +165,17 @@ func (so *ServiceOptions) AddLoggingHooks(
 	}
 
 	so.Hooks = twirp.ChainHooks(LoggingHooks(logger, scopesFunc), so.Hooks)
+}
+
+func (so *ServiceOptions) AddMetricsHooks(reg prometheus.Registerer) error {
+	hooks, err := NewTwirpMetricsHooks(WithTwirpMetricsRegisterer(reg))
+	if err != nil {
+		return err
+	}
+
+	so.Hooks = twirp.ChainHooks(so.Hooks, hooks)
+
+	return nil
 }
 
 func (so *ServiceOptions) SetJWTValidation(
