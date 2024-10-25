@@ -171,6 +171,8 @@ func PInt2(n *int16) pgtype.Int2 {
 
 // SafeRollback rolls back a transaction and logs if the rollback fails. If the
 // transaction already has been closed it's not treated as an error.
+//
+// Deprecated: use Rollback() instead.
 func SafeRollback(
 	ctx context.Context, logger *slog.Logger, tx pgx.Tx, txName string,
 ) {
@@ -179,6 +181,20 @@ func SafeRollback(
 		logger.ErrorContext(ctx, "failed to roll back",
 			elephantine.LogKeyError, err,
 			elephantine.LogKeyTransaction, txName)
+	}
+}
+
+// Rollback rolls back a transaction and joins the rollback error to the
+// outError if the rollback fails. If the transaction already has been
+// committed/closed it's not treated as an error.
+//
+// Defer a call to Rollback directly after a transaction has been created. That
+// will give you the guarantee that everything you've done will be rolled back
+// if you return early before committing.
+func Rollback(tx pgx.Tx, outErr *error) {
+	err := tx.Rollback(context.Background())
+	if err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		*outErr = errors.Join(*outErr, fmt.Errorf("roll back transaction: %w", err))
 	}
 }
 
