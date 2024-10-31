@@ -23,6 +23,13 @@ func NewAPIServer(
 		profileAddr: profileAddr,
 		Mux:         http.NewServeMux(),
 		Health:      NewHealthServer(logger, profileAddr),
+		CORS: &CORSOptions{
+			AllowInsecure:          false,
+			AllowInsecureLocalhost: true,
+			Hosts:                  []string{"localhost", "tt.se"},
+			AllowedMethods:         []string{"GET", "POST"},
+			AllowedHeaders:         []string{"Authorization", "Content-Type"},
+		},
 	}
 
 	s.Mux.Handle("GET /health/alive", http.HandlerFunc(func(
@@ -48,6 +55,7 @@ type APIServer struct {
 	profileAddr string
 	Mux         *http.ServeMux
 	Health      *HealthServer
+	CORS        *CORSOptions
 }
 
 func (s *APIServer) AliveEndpoint() string {
@@ -80,15 +88,21 @@ func (s *APIServer) RegisterAPI(
 }
 
 func (s *APIServer) ListenAndServe(ctx context.Context) error {
-	var handler http.HandlerFunc = func(w http.ResponseWriter, r *http.Request) {
+	var handler http.Handler = s.Mux
+
+	if s.CORS != nil {
+		handler = CORSMiddleware(*s.CORS, s.Mux)
+	}
+
+	var loggingHandler http.HandlerFunc = func(w http.ResponseWriter, r *http.Request) {
 		ctx := WithLogMetadata(r.Context())
 
-		s.Mux.ServeHTTP(w, r.WithContext(ctx))
+		handler.ServeHTTP(w, r.WithContext(ctx))
 	}
 
 	server := http.Server{
 		Addr:              s.addr,
-		Handler:           handler,
+		Handler:           loggingHandler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
