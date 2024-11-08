@@ -247,9 +247,9 @@ type TransactionBeginner interface {
 // WithTX starts a transaction and calls the given function with it. If the
 // function returns an error or panics the transaction will be rolled back.
 func WithTX(
-	ctx context.Context, logger *slog.Logger, pool TransactionBeginner,
-	name string, fn func(tx pgx.Tx) error,
-) error {
+	ctx context.Context, pool TransactionBeginner,
+	fn func(tx pgx.Tx) error,
+) (outErr error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -257,7 +257,7 @@ func WithTX(
 
 	// We defer a rollback, rollback after commit won't be treated as an
 	// error.
-	defer SafeRollback(ctx, logger, tx, name)
+	defer Rollback(tx, &outErr)
 
 	err = fn(tx)
 	if err != nil {
