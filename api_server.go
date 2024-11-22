@@ -41,9 +41,7 @@ func NewAPIServer(
 		_, _ = fmt.Fprintln(w, "I AM ALIVE!")
 	}))
 
-	healthServer := NewHealthServer(logger, profileAddr)
-
-	healthServer.AddReadyFunction("api_liveness",
+	s.Health.AddReadyFunction("api_liveness",
 		LivenessReadyCheck(s.AliveEndpoint()))
 
 	return &s
