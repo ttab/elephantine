@@ -132,7 +132,7 @@ func AuthenticationCLIFlags() []cli.Flag {
 type AuthenticationConfig struct {
 	OIDCConfig  *OpenIDConnectConfig
 	TokenSource oauth2.TokenSource
-	AuthParser  *AuthInfoParser
+	AuthParser  *JWTAuthInfoParser
 
 	c           *cli.Context
 	paramSource ParameterSource
@@ -179,7 +179,7 @@ func AuthenticationConfigFromCLI(
 
 	authInfoParser, err := NewJWKSAuthInfoParser(
 		c.Context, oidcConfig.JwksURI,
-		AuthInfoParserOptions{
+		JWTAuthInfoParserOptions{
 			Issuer:      oidcConfig.Issuer,
 			Audience:    audience,
 			ScopePrefix: prefix,

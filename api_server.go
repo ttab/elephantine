@@ -137,15 +137,35 @@ func (s *APIServer) ListenAndServe(ctx context.Context) error {
 	return grp.Wait() //nolint: wrapcheck
 }
 
+// ServiceAuth is used to control behaviour when an unauthorized client makes a
+// call to the service.
+type ServiceAuth bool
+
+const (
+	// ServiceAuthRequired respond with a Twirp Unauthenticated error for
+	// unauthorized calls.
+	ServiceAuthRequired ServiceAuth = true
+	// ServiceAuthOptional allow unauthorized calls, invalid authorizations
+	// will still result in an error, but calls missing authorization will
+	// be let through to the service implementation.
+	ServiceAuthOptional ServiceAuth = false
+)
+
+// NewDefaultServiceOptions sets up the standard options for our Twirp
+// services. This sets up authentication, logging and metrics. Apply the options
+// to your Twirp servers using the ServerOptions() method.
 func NewDefaultServiceOptions(
 	logger *slog.Logger,
-	parser *AuthInfoParser,
+	parser AuthInfoParser,
 	reg prometheus.Registerer,
+	requireAuth ServiceAuth,
 ) (ServiceOptions, error) {
-	var so ServiceOptions
+	so := ServiceOptions{
+		JSONSkipDefaults: true,
+	}
 
-	so.SetJWTValidation(parser, true)
-	so.AddLoggingHooks(logger, nil)
+	so.SetAuthInfoValidation(parser, requireAuth)
+	so.AddLoggingHooks(logger)
 
 	err := so.AddMetricsHooks(reg)
 	if err != nil {
@@ -160,23 +180,27 @@ type ServiceOptions struct {
 	AuthMiddleware func(
 		w http.ResponseWriter, r *http.Request, next http.Handler,
 	) error
+
+	// JSONSkipDefaults configures JSON serialization to skip unpopulated or
+	// default values in JSON responses, which results in smaller responses
+	// that are easier to read if your messages contain lots of fields that
+	// may have their default/zero value.
+	JSONSkipDefaults bool
+}
+
+// ServerOptions returns a ServerOptions function that configures the twirp
+// server according to the set service options.
+func (so *ServiceOptions) ServerOptions() twirp.ServerOption {
+	return func(opts *twirp.ServerOptions) {
+		twirp.WithServerJSONSkipDefaults(so.JSONSkipDefaults)(opts)
+		twirp.WithServerHooks(so.Hooks)(opts)
+	}
 }
 
 func (so *ServiceOptions) AddLoggingHooks(
-	logger *slog.Logger, scopesFunc func(context.Context) string,
+	logger *slog.Logger,
 ) {
-	if scopesFunc == nil {
-		scopesFunc = func(ctx context.Context) string {
-			auth, ok := GetAuthInfo(ctx)
-			if !ok {
-				return ""
-			}
-
-			return auth.Claims.Scope
-		}
-	}
-
-	so.Hooks = twirp.ChainHooks(LoggingHooks(logger, scopesFunc), so.Hooks)
+	so.Hooks = twirp.ChainHooks(LoggingHooks(logger), so.Hooks)
 }
 
 func (so *ServiceOptions) AddMetricsHooks(reg prometheus.Registerer) error {
@@ -190,8 +214,8 @@ func (so *ServiceOptions) AddMetricsHooks(reg prometheus.Registerer) error {
 	return nil
 }
 
-func (so *ServiceOptions) SetJWTValidation(
-	parser *AuthInfoParser, requireAuth bool,
+func (so *ServiceOptions) SetAuthInfoValidation(
+	parser AuthInfoParser, requireAuth ServiceAuth,
 ) {
 	so.AuthMiddleware = func(
 		w http.ResponseWriter, r *http.Request, next http.Handler,
@@ -225,6 +249,9 @@ func (so *ServiceOptions) SetJWTValidation(
 			} else if err != nil {
 				return ctx, twirp.PermissionDenied.Errorf(
 					"invalid authorization: %v", err)
+			} else if auth == nil {
+				return ctx, twirp.InternalError(
+					"invalid auth info parser response")
 			}
 
 			if auth != nil {

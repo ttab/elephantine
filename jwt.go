@@ -68,14 +68,21 @@ type AuthInfo struct {
 // missing, rather than being invalid, expired, or malformed.
 var ErrNoAuthorization = errors.New("no authorization provided")
 
-type AuthInfoParser struct {
+type AuthInfoParser interface {
+	// AuthInfoFromHeader extracts the AuthInfo from a HTTP Authorization
+	// header. Return ErrNoAuthorization if no authorization information was
+	// provided.
+	AuthInfoFromHeader(authorization string) (*AuthInfo, error)
+}
+
+type JWTAuthInfoParser struct {
 	keyfunc     jwt.Keyfunc
 	validator   *jwt.Validator
 	cache       *ttlcache.Cache[string, AuthInfo]
 	scopePrefix *regexp.Regexp
 }
 
-type AuthInfoParserOptions struct {
+type JWTAuthInfoParserOptions struct {
 	Audience    string
 	Issuer      string
 	ScopePrefix string
@@ -88,8 +95,8 @@ func ScopePrefixRegexp(prefix string) *regexp.Regexp {
 	return regexp.MustCompile(fmt.Sprintf("\\b%s", regexp.QuoteMeta(prefix)))
 }
 
-func newAuthInfoParser(keyfunc jwt.Keyfunc, opts AuthInfoParserOptions) *AuthInfoParser {
-	return &AuthInfoParser{
+func newJWTAuthInfoParser(keyfunc jwt.Keyfunc, opts JWTAuthInfoParserOptions) *JWTAuthInfoParser {
+	return &JWTAuthInfoParser{
 		keyfunc: keyfunc,
 		validator: jwt.NewValidator(
 			jwt.WithLeeway(5*time.Second),
@@ -101,24 +108,21 @@ func newAuthInfoParser(keyfunc jwt.Keyfunc, opts AuthInfoParserOptions) *AuthInf
 	}
 }
 
-func NewJWKSAuthInfoParser(ctx context.Context, jwksUrl string, opts AuthInfoParserOptions) (*AuthInfoParser, error) {
+func NewJWKSAuthInfoParser(ctx context.Context, jwksUrl string, opts JWTAuthInfoParserOptions) (*JWTAuthInfoParser, error) {
 	k, err := keyfunc.NewDefaultCtx(ctx, []string{jwksUrl})
 	if err != nil {
 		return nil, fmt.Errorf("could not create keyfunc: %w", err)
 	}
-	return newAuthInfoParser(k.Keyfunc, opts), nil
+	return newJWTAuthInfoParser(k.Keyfunc, opts), nil
 }
 
-func NewStaticAuthInfoParser(key ecdsa.PublicKey, opts AuthInfoParserOptions) *AuthInfoParser {
-	return newAuthInfoParser(func(t *jwt.Token) (interface{}, error) {
+func NewStaticAuthInfoParser(key ecdsa.PublicKey, opts JWTAuthInfoParserOptions) *JWTAuthInfoParser {
+	return newJWTAuthInfoParser(func(t *jwt.Token) (interface{}, error) {
 		return &key, nil
 	}, opts)
 }
 
-// AuthInfoFromHeader extracts the AuthInfo from a HTTP Authorization
-// header. This is a placeholder implementation with a static JWT signing key
-// that only will work with tokens that have the `iss: test` claim.
-func (p *AuthInfoParser) AuthInfoFromHeader(authorization string) (*AuthInfo, error) {
+func (p *JWTAuthInfoParser) AuthInfoFromHeader(authorization string) (*AuthInfo, error) {
 	if authorization == "" {
 		return nil, ErrNoAuthorization
 	}
@@ -221,7 +225,7 @@ func claimsToSubject(claims JWTClaims) (string, error) {
 }
 
 // Valid validates the jwt.RegisteredClaims.
-func (p *AuthInfoParser) Valid(c JWTClaims) error {
+func (p *JWTAuthInfoParser) Valid(c JWTClaims) error {
 	return p.validator.Validate(c.RegisteredClaims)
 }
 
