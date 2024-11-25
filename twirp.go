@@ -45,7 +45,7 @@ func TwirpErrorToHTTPStatusCode(err error) int {
 // LoggingHooks creaes a twirp.ServerHooks that will set log metadata for the
 // twirp service and method name, and log error responses.
 func LoggingHooks(
-	logger *slog.Logger, scopesFunc func(context.Context) string,
+	logger *slog.Logger,
 ) *twirp.ServerHooks {
 	hooks := twirp.ServerHooks{
 		RequestRouted: func(ctx context.Context) (context.Context, error) {
@@ -59,11 +59,17 @@ func LoggingHooks(
 				SetLogMetadata(ctx, LogKeyMethod, method)
 			}
 
+			auth, ok := GetAuthInfo(ctx)
+			if ok {
+				SetLogMetadata(ctx, LogKeySubject, auth.Claims.Subject)
+			}
+
 			return ctx, nil
 		},
 		Error: func(ctx context.Context, err twirp.Error) context.Context {
 			code := err.Code()
 			status := twirp.ServerHTTPStatusFromErrorCode(err.Code())
+			auth, hasAuth := GetAuthInfo(ctx)
 
 			args := []any{
 				LogKeyErrorCode, code,
@@ -77,9 +83,9 @@ func LoggingHooks(
 					LogKeyErrorMeta, err.MetaMap())
 			}
 
-			if code == twirp.PermissionDenied {
+			if code == twirp.PermissionDenied && hasAuth {
 				args = append(args,
-					LogKeyScopes, scopesFunc(ctx))
+					LogKeyScopes, auth.Claims.Scope)
 			}
 
 			level := slog.LevelWarn

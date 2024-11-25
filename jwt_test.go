@@ -17,7 +17,7 @@ func TestHandleTokenWithoutExpiry(t *testing.T) {
 	jwtKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	test.Must(t, err, "create signing key")
 
-	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.AuthInfoParserOptions{})
+	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.JWTAuthInfoParserOptions{})
 	token := jwt.NewWithClaims(jwt.SigningMethodES384, elephantine.JWTClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: "test",
@@ -35,7 +35,7 @@ func TestVerifyIssuer(t *testing.T) {
 	jwtKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	test.Must(t, err, "create signing key")
 
-	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.AuthInfoParserOptions{
+	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.JWTAuthInfoParserOptions{
 		Issuer: "test",
 	})
 	token := jwt.NewWithClaims(jwt.SigningMethodES384, elephantine.JWTClaims{
@@ -55,7 +55,7 @@ func TestVerifyExpiry(t *testing.T) {
 	jwtKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	test.Must(t, err, "create signing key")
 
-	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.AuthInfoParserOptions{})
+	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.JWTAuthInfoParserOptions{})
 
 	token := jwt.NewWithClaims(jwt.SigningMethodES384, elephantine.JWTClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -74,7 +74,7 @@ func TestAuthInfoParsesScopes(t *testing.T) {
 	jwtKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	test.Must(t, err, "create signing key")
 
-	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.AuthInfoParserOptions{
+	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.JWTAuthInfoParserOptions{
 		Issuer: "test",
 	})
 	token := jwt.NewWithClaims(jwt.SigningMethodES384, elephantine.JWTClaims{
@@ -98,7 +98,7 @@ func TestAuthInfoStripsScopePrefix(t *testing.T) {
 	jwtKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	test.Must(t, err, "create signing key")
 
-	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.AuthInfoParserOptions{
+	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.JWTAuthInfoParserOptions{
 		ScopePrefix: "test_",
 	})
 	token := jwt.NewWithClaims(jwt.SigningMethodES384, elephantine.JWTClaims{
@@ -118,7 +118,7 @@ func TestAuthInfoUnitMapping(t *testing.T) {
 	jwtKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	test.Must(t, err, "create signing key")
 
-	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.AuthInfoParserOptions{})
+	parser := elephantine.NewStaticAuthInfoParser(jwtKey.PublicKey, elephantine.JWTAuthInfoParserOptions{})
 	token := jwt.NewWithClaims(jwt.SigningMethodES384, elephantine.JWTClaims{
 		Units: []string{
 			"external://resource/thing",
@@ -171,7 +171,7 @@ func TestAuthInfoSubjectMapping(t *testing.T) {
 	}
 
 	parser := elephantine.NewStaticAuthInfoParser(
-		jwtKey.PublicKey, elephantine.AuthInfoParserOptions{},
+		jwtKey.PublicKey, elephantine.JWTAuthInfoParserOptions{},
 	)
 
 	for want, input := range cases {
