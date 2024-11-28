@@ -25,6 +25,7 @@ type JWTClaims struct {
 	Name            string   `json:"sub_name"`
 	Scope           string   `json:"scope"`
 	AuthorizedParty string   `json:"azp"`
+	ClientID        string   `json:"client_id"`
 	Units           []string `json:"units,omitempty"`
 }
 
@@ -216,8 +217,8 @@ func claimsToSubject(claims JWTClaims) (string, error) {
 
 	// This is an application token, return
 	// "core://application/{.AuthorizedParty}".
-	if claims.AuthorizedParty != "" {
-		return appURI.JoinPath(claims.AuthorizedParty).String(), nil
+	if claims.ClientID != "" {
+		return appURI.JoinPath(claims.ClientID).String(), nil
 	}
 
 	// Assume user URI and return "core://user/{.Subject}".

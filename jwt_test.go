@@ -161,7 +161,7 @@ func TestAuthInfoSubjectMapping(t *testing.T) {
 			RegisteredClaims: jwt.RegisteredClaims{
 				Subject: "17c11ca5-1eea-4e31-a31c-a0c6e937abd0",
 			},
-			AuthorizedParty: "name-of-app",
+			ClientID: "name-of-app",
 		},
 		"external://sub/of/some/kind": {
 			RegisteredClaims: jwt.RegisteredClaims{
