@@ -4,7 +4,7 @@ go 1.23.3
 
 require (
 	github.com/MicahParks/keyfunc/v3 v3.3.5
-	github.com/aws/aws-sdk-go-v2 v1.32.5
+	github.com/aws/aws-sdk-go-v2 v1.32.7
 	github.com/aws/aws-sdk-go-v2/config v1.28.5
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.56.0
 	github.com/golang-jwt/jwt/v5 v5.2.1
