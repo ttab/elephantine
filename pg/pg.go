@@ -27,7 +27,7 @@ func PBool(b *bool) pgtype.Bool {
 	}
 }
 
-// PInt32 converts a *bool to a pgtype.Int4.
+// PInt32 converts a *int32 to a pgtype.Int4.
 func PInt32(n *int32) pgtype.Int4 {
 	if n == nil {
 		return pgtype.Int4{}
@@ -35,6 +35,18 @@ func PInt32(n *int32) pgtype.Int4 {
 
 	return pgtype.Int4{
 		Int32: *n,
+		Valid: true,
+	}
+}
+
+// PInt64 converts a *int64 to a pgtype.Int8.
+func PInt64(n *int64) pgtype.Int8 {
+	if n == nil {
+		return pgtype.Int8{}
+	}
+
+	return pgtype.Int8{
+		Int64: *n,
 		Valid: true,
 	}
 }
