@@ -23,15 +23,25 @@ type ChannelSubscription interface {
 	NotifyWithPayload(data []byte) error
 }
 
-// Publish a message on a pubsub channel.
+// Publish a JSON message on a pubsub channel.
 func Publish(
 	ctx context.Context, db DBExec,
 	channel string, message any,
 ) error {
-	_, err := db.Exec(ctx,
+	data, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("marshal message to JSON: %w", err)
+	}
+
+	_, err = db.Exec(ctx,
 		"SELECT pg_notify($1::text, $2::text)",
-		channel, message)
-	return err
+		channel, string(data),
+	)
+	if err != nil {
+		return fmt.Errorf("notify postgres channel: %w", err)
+	}
+
+	return nil
 }
 
 // Subscribe opens a connection to the database and subscribes to the provided
