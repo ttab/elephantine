@@ -15,6 +15,10 @@ import (
 	"github.com/ttab/elephantine"
 )
 
+type DBExec interface {
+	Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error)
+}
+
 // PBool converts a *bool to a pgtype.Bool.
 func PBool(b *bool) pgtype.Bool {
 	if b == nil {
