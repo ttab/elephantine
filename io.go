@@ -97,11 +97,21 @@ func UnmarshalHTTPResource(resURL string, o any) (outErr error) {
 
 // SafeClose can be used with defer to defer the Close of a resource without
 // ignoring the error.
+//
+// Deprecated: use Close() instead.
 func SafeClose(logger *slog.Logger, name string, c io.Closer) {
 	err := c.Close()
 	if err != nil {
 		logger.Error("failed to close",
 			LogKeyName, name,
 			LogKeyError, err.Error())
+	}
+}
+
+// Close a resource and joins the error to the outError if the close fails.
+func Close(name string, c io.Closer, outErr *error) {
+	err := c.Close()
+	if err != nil {
+		*outErr = errors.Join(*outErr, fmt.Errorf("close %s: %w", name, err))
 	}
 }
