@@ -17,8 +17,31 @@ import (
 )
 
 type ChannelSubscription interface {
+	// ChannelName to listen to.
 	ChannelName() string
+	// NotifyWithPayload notifies local consumers of the message.
 	NotifyWithPayload(data []byte) error
+}
+
+// Publish a JSON message on a pubsub channel.
+func Publish(
+	ctx context.Context, db DBExec,
+	channel string, message any,
+) error {
+	data, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("marshal message to JSON: %w", err)
+	}
+
+	_, err = db.Exec(ctx,
+		"SELECT pg_notify($1::text, $2::text)",
+		channel, string(data),
+	)
+	if err != nil {
+		return fmt.Errorf("notify postgres channel: %w", err)
+	}
+
+	return nil
 }
 
 // Subscribe opens a connection to the database and subscribes to the provided
@@ -140,12 +163,15 @@ func NewFanOut[T any](channel string) *FanOut[T] {
 	}
 }
 
+// ListenAll listens for notifications until the context is cancelled.
 func (f *FanOut[T]) ListenAll(ctx context.Context, l chan T) {
 	f.Listen(ctx, l, func(v T) bool {
 		return true
 	})
 }
 
+// Listen for notifications until the context is cancelled. The test function is
+// used to filter out events before they are posted to the channel.
 func (f *FanOut[T]) Listen(ctx context.Context, l chan T, test func(v T) bool) {
 	f.m.Lock()
 	f.listeners[l] = test
@@ -158,10 +184,12 @@ func (f *FanOut[T]) Listen(ctx context.Context, l chan T, test func(v T) bool) {
 	f.m.Unlock()
 }
 
+// Implements ChannelSubscription.
 func (f *FanOut[T]) ChannelName() string {
 	return f.channel
 }
 
+// Implements ChannelSubscription.
 func (f *FanOut[T]) NotifyWithPayload(data []byte) error {
 	var e T
 
@@ -175,6 +203,7 @@ func (f *FanOut[T]) NotifyWithPayload(data []byte) error {
 	return nil
 }
 
+// Notify local consumers of a message.
 func (f *FanOut[T]) Notify(msg T) {
 	f.m.RLock()
 	defer f.m.RUnlock()
@@ -189,4 +218,9 @@ func (f *FanOut[T]) Notify(msg T) {
 		default:
 		}
 	}
+}
+
+// Publish a message to the channel.
+func (f *FanOut[T]) Publish(ctx context.Context, db DBExec, msg T) error {
+	return Publish(ctx, db, f.channel, msg)
 }
