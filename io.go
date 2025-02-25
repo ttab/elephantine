@@ -12,7 +12,7 @@ import (
 
 // UnmarshalFile is a utility function for reading and unmarshalling a file
 // containing JSON. The parsing will be strict and disallow unknown fields.
-func UnmarshalFile(path string, o interface{}) (outErr error) {
+func UnmarshalFile(path string, o any) (outErr error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
@@ -40,7 +40,7 @@ func UnmarshalFile(path string, o interface{}) (outErr error) {
 
 // MarshalToFile is a utility function for marshalling a data structore to JSON
 // and write it to a fil. The JSON will be pretty printed.
-func MarshalFile(path string, o interface{}) (outErr error) {
+func MarshalFile(path string, o any) (outErr error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
@@ -67,7 +67,7 @@ func MarshalFile(path string, o interface{}) (outErr error) {
 
 // UnmarshalHTTPResource is a utility function for reading and unmarshalling a
 // HTTP resource. Uses the default HTTP client.
-func UnmarshalHTTPResource(resURL string, o interface{}) (outErr error) {
+func UnmarshalHTTPResource(resURL string, o any) (outErr error) {
 	res, err := http.Get(resURL) //nolint:gosec
 	if err != nil {
 		return fmt.Errorf("failed to perform request: %w", err)

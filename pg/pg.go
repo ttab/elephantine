@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 )
 
 type DBExec interface {
-	Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error)
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }
 
 // PBool converts a *bool to a pgtype.Bool.
@@ -228,9 +229,7 @@ func SetConnStringVariables(conn string, vars url.Values) (string, error) {
 
 	q := u.Query()
 
-	for k, v := range vars {
-		q[k] = v
-	}
+	maps.Copy(q, vars)
 
 	u.RawQuery = q.Encode()
 
