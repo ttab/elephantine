@@ -64,7 +64,8 @@ func TestMessageAgainstGolden(
 
 	if regenerate {
 		opts := protojson.MarshalOptions{
-			Multiline: true,
+			UseProtoNames: true,
+			Multiline:     true,
 		}
 
 		data, err := opts.Marshal(got)
