@@ -66,6 +66,7 @@ func TestMessageAgainstGolden(
 		opts := protojson.MarshalOptions{
 			UseProtoNames: true,
 			Multiline:     true,
+			Indent:        "  ",
 		}
 
 		data, err := opts.Marshal(got)
