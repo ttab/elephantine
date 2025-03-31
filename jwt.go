@@ -64,9 +64,16 @@ var ErrNoAuthorization = errors.New("no authorization provided")
 
 type AuthInfoParser interface {
 	// AuthInfoFromHeader extracts the AuthInfo from a HTTP Authorization
-	// header. Return ErrNoAuthorization if no authorization information was
-	// provided.
+	// header, then validates the bearer token. Return ErrNoAuthorization
+	// if no authorization information was provided.
 	AuthInfoFromHeader(authorization string) (*AuthInfo, error)
+	// AuthInfoFromToken validates a bearer token and returns the AuthInfo.
+	// Useful when we have already extracted the token from header and/or
+	// query parameter.
+	AuthInfoFromToken(token string) (*AuthInfo, error)
+	// ValidateTokenWithClaims validates a bearer token and returns the raw token
+	// object. Useful if you need to do custom claims deserialization.
+	ValidateTokenWithClaims(token string, claims jwt.Claims) (*jwt.Token, error)
 }
 
 type JWTAuthInfoParser struct {
@@ -116,18 +123,7 @@ func NewStaticAuthInfoParser(key ecdsa.PublicKey, opts JWTAuthInfoParserOptions)
 	}, opts)
 }
 
-func (p *JWTAuthInfoParser) AuthInfoFromHeader(authorization string) (*AuthInfo, error) {
-	if authorization == "" {
-		return nil, ErrNoAuthorization
-	}
-
-	tokenType, token, _ := strings.Cut(authorization, " ")
-
-	tokenType = strings.ToLower(tokenType)
-	if tokenType != "bearer" {
-		return nil, errors.New("only bearer tokens are supported")
-	}
-
+func (p *JWTAuthInfoParser) AuthInfoFromToken(token string) (*AuthInfo, error) {
 	item := p.cache.Get(token)
 	if item != nil && !item.IsExpired() {
 		value := item.Value()
@@ -137,18 +133,9 @@ func (p *JWTAuthInfoParser) AuthInfoFromHeader(authorization string) (*AuthInfo,
 
 	var claims JWTClaims
 
-	_, err := jwt.ParseWithClaims(token, &claims, p.keyfunc,
-		jwt.WithValidMethods([]string{
-			jwt.SigningMethodRS256.Name,
-			jwt.SigningMethodES384.Name,
-		}))
+	_, err := p.ValidateTokenWithClaims(token, &claims)
 	if err != nil {
-		return nil, fmt.Errorf("invalid token: %w", err)
-	}
-
-	err = p.Valid(claims)
-	if err != nil {
-		return nil, fmt.Errorf("invalid claims: %w", err)
+		return nil, err
 	}
 
 	unitBase := &url.URL{
@@ -192,6 +179,38 @@ func (p *JWTAuthInfoParser) AuthInfoFromHeader(authorization string) (*AuthInfo,
 	return &auth, nil
 }
 
+func (p *JWTAuthInfoParser) ValidateTokenWithClaims(token string, claims jwt.Claims) (*jwt.Token, error) {
+	parsed, err := jwt.ParseWithClaims(token, claims, p.keyfunc,
+		jwt.WithValidMethods([]string{
+			jwt.SigningMethodRS256.Name,
+			jwt.SigningMethodES384.Name,
+		}))
+	if err != nil {
+		return nil, fmt.Errorf("invalid token: %w", err)
+	}
+
+	err = p.Valid(claims)
+	if err != nil {
+		return nil, fmt.Errorf("invalid claims: %w", err)
+	}
+	return parsed, nil
+}
+
+func (p *JWTAuthInfoParser) AuthInfoFromHeader(authorization string) (*AuthInfo, error) {
+	if authorization == "" {
+		return nil, ErrNoAuthorization
+	}
+
+	tokenType, token, _ := strings.Cut(authorization, " ")
+
+	tokenType = strings.ToLower(tokenType)
+	if tokenType != "bearer" {
+		return nil, errors.New("only bearer tokens are supported")
+	}
+
+	return p.AuthInfoFromToken(token)
+}
+
 var (
 	appURI  = url.URL{Scheme: "core", Host: "application"}
 	userURI = url.URL{Scheme: "core", Host: "user"}
@@ -219,8 +238,8 @@ func claimsToSubject(claims JWTClaims) (string, error) {
 }
 
 // Valid validates the jwt.RegisteredClaims.
-func (p *JWTAuthInfoParser) Valid(c JWTClaims) error {
-	return p.validator.Validate(c.RegisteredClaims)
+func (p *JWTAuthInfoParser) Valid(c jwt.Claims) error {
+	return p.validator.Validate(c)
 }
 
 // SetAuthInfo creates a child context with the given authentication
