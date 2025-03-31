@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"time"
 
@@ -14,6 +15,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/ttab/elephantine"
 )
+
+type DBExec interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
 
 // PBool converts a *bool to a pgtype.Bool.
 func PBool(b *bool) pgtype.Bool {
@@ -27,7 +32,7 @@ func PBool(b *bool) pgtype.Bool {
 	}
 }
 
-// PInt32 converts a *bool to a pgtype.Int4.
+// PInt32 converts a *int32 to a pgtype.Int4.
 func PInt32(n *int32) pgtype.Int4 {
 	if n == nil {
 		return pgtype.Int4{}
@@ -35,6 +40,18 @@ func PInt32(n *int32) pgtype.Int4 {
 
 	return pgtype.Int4{
 		Int32: *n,
+		Valid: true,
+	}
+}
+
+// PInt64 converts a *int64 to a pgtype.Int8.
+func PInt64(n *int64) pgtype.Int8 {
+	if n == nil {
+		return pgtype.Int8{}
+	}
+
+	return pgtype.Int8{
+		Int64: *n,
 		Valid: true,
 	}
 }
@@ -212,9 +229,7 @@ func SetConnStringVariables(conn string, vars url.Values) (string, error) {
 
 	q := u.Query()
 
-	for k, v := range vars {
-		q[k] = v
-	}
+	maps.Copy(q, vars)
 
 	u.RawQuery = q.Encode()
 

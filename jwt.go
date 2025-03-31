@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,13 +34,7 @@ type JWTClaims struct {
 func (c JWTClaims) HasScope(name string) bool {
 	scopes := strings.Split(c.Scope, " ")
 
-	for i := range scopes {
-		if scopes[i] == name {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(scopes, name)
 }
 
 // HasScope returns true if the Scope claim contains any of the named scopes.
@@ -47,10 +42,8 @@ func (c JWTClaims) HasAnyScope(names ...string) bool {
 	scopes := strings.Split(c.Scope, " ")
 
 	for i := range scopes {
-		for j := range names {
-			if scopes[i] == names[j] {
-				return true
-			}
+		if slices.Contains(names, scopes[i]) {
+			return true
 		}
 	}
 
@@ -125,7 +118,7 @@ func NewJWKSAuthInfoParser(ctx context.Context, jwksUrl string, opts JWTAuthInfo
 }
 
 func NewStaticAuthInfoParser(key ecdsa.PublicKey, opts JWTAuthInfoParserOptions) *JWTAuthInfoParser {
-	return newJWTAuthInfoParser(func(t *jwt.Token) (interface{}, error) {
+	return newJWTAuthInfoParser(func(t *jwt.Token) (any, error) {
 		return &key, nil
 	}, opts)
 }

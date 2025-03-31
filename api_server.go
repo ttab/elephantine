@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -17,12 +19,57 @@ func NewAPIServer(
 	logger *slog.Logger,
 	addr string, profileAddr string,
 ) *APIServer {
+	health := NewHealthServer(logger, profileAddr)
+
+	return newAPIServer(logger, false, addr, profileAddr, http.NewServeMux(), &handlerWrapper{}, health)
+}
+
+type Cleaner interface {
+	Cleanup(fn func())
+}
+
+func NewTestAPIServer(
+	t Cleaner,
+	logger *slog.Logger,
+) *APIServer {
+	mux := http.NewServeMux()
+
+	var handler handlerWrapper
+
+	testServer := httptest.NewServer(&handler)
+	healthServer := NewTestHealthServer(logger)
+
+	t.Cleanup(func() {
+		testServer.Close()
+		_ = healthServer.Close()
+	})
+
+	return newAPIServer(logger, true,
+		testServer.Listener.Addr().String(),
+		healthServer.Addr(), mux, &handler, healthServer)
+}
+
+type handlerWrapper struct {
+	Handler http.Handler
+}
+
+func (h *handlerWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.Handler.ServeHTTP(w, r)
+}
+
+func newAPIServer(
+	logger *slog.Logger, testServer bool,
+	addr string, profileAddr string,
+	mux *http.ServeMux, handler *handlerWrapper, health *HealthServer,
+) *APIServer {
 	s := APIServer{
+		testServer:  testServer,
 		logger:      logger,
 		addr:        addr,
 		profileAddr: profileAddr,
-		Mux:         http.NewServeMux(),
-		Health:      NewHealthServer(logger, profileAddr),
+		handler:     handler,
+		Mux:         mux,
+		Health:      health,
 		CORS: &CORSOptions{
 			AllowInsecure:          false,
 			AllowInsecureLocalhost: true,
@@ -48,18 +95,31 @@ func NewAPIServer(
 }
 
 type APIServer struct {
+	testServer bool
+
 	logger      *slog.Logger
 	addr        string
 	profileAddr string
-	Mux         *http.ServeMux
-	Health      *HealthServer
-	CORS        *CORSOptions
+	handler     *handlerWrapper
+
+	Mux    *http.ServeMux
+	Health *HealthServer
+	CORS   *CORSOptions
+}
+
+func (s *APIServer) Addr() string {
+	addr := s.addr
+	if strings.HasPrefix(addr, ":") {
+		addr = "localhost" + addr
+	}
+
+	return addr
 }
 
 func (s *APIServer) AliveEndpoint() string {
 	return fmt.Sprintf(
-		"http://localhost%s/health/alive",
-		s.addr,
+		"http://%s/health/alive",
+		s.Addr(),
 	)
 }
 
@@ -96,6 +156,13 @@ func (s *APIServer) ListenAndServe(ctx context.Context) error {
 		ctx := WithLogMetadata(r.Context())
 
 		handler.ServeHTTP(w, r.WithContext(ctx))
+	}
+
+	// Test servers are started from the get-go.
+	if s.testServer {
+		s.handler.Handler = loggingHandler
+
+		return nil
 	}
 
 	server := http.Server{

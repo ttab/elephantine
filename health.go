@@ -68,6 +68,14 @@ func NewTestHealthServer(logger *slog.Logger) *HealthServer {
 	return &s
 }
 
+func (s *HealthServer) Addr() string {
+	if s.testServer != nil {
+		return s.testServer.Listener.Addr().String()
+	}
+
+	return s.server.Addr
+}
+
 func (s *HealthServer) setUpMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
