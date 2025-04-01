@@ -3,11 +3,26 @@ package elephantine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/twitchtv/twirp"
 )
+
+// InvalidArgumentf creates a invaldid argument error with a formatted message.
+func InvalidArgumentf(argument string, format string, a ...any) error {
+	pErr := fmt.Errorf(format, a...)
+
+	err := twirp.InvalidArgumentError(argument, pErr.Error())
+
+	wrapped := errors.Unwrap(pErr)
+	if wrapped != nil {
+		err = twirp.WrapError(err, wrapped)
+	}
+
+	return err
+}
 
 // IsTwirpErrorCode checks if any error in the tree is a twirp.Error with the
 // given error code.
