@@ -50,10 +50,7 @@ func newGracefulShutdown(
 		signal.Notify(gs.signals, syscall.SIGINT, syscall.SIGTERM)
 
 		go func() {
-			for {
-				if !gs.poll() {
-					break
-				}
+			for gs.poll() {
 			}
 
 			// Stop subscription.

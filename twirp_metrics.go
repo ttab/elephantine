@@ -129,7 +129,7 @@ func NewTwirpMetricsHooks(opts ...TwirpMetricOptionFunc) (*twirp.ServerHooks, er
 		serviceName, sOk := twirp.ServiceName(ctx)
 		method, mOk := twirp.MethodName(ctx)
 
-		if !(sOk && mOk) {
+		if !sOk || !mOk {
 			return ctx, nil
 		}
 

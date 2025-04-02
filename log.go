@@ -83,6 +83,9 @@ const (
 	LogKeyStatusCode = "status_code"
 	// LogKeyName is the name of a resource.
 	LogKeyName = "name"
+	// LogKeyAlertCode is a code used to flag that something needs the
+	// attention of a human operator.
+	LogKeyAlertCode = "alert_code"
 )
 
 // SetUpLogger creates a default JSON logger and sets it as the global logger.
