@@ -192,9 +192,7 @@ func TestMessageAgainstGolden(
 	var cmpOpts cmp.Options
 
 	for _, h := range helpers {
-		for _, opt := range h.CmpOpts() {
-			cmpOpts = append(cmpOpts, opt)
-		}
+		cmpOpts = append(cmpOpts, h.CmpOpts()...)
 	}
 
 	EqualMessageWithOptions(t, wantMessage, got, cmpOpts, "must match golden file %q", goldenPath)
