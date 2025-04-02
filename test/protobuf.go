@@ -1,12 +1,16 @@
 package test
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/testing/protocmp"
@@ -50,6 +54,91 @@ func EqualMessageWithOptions(t TestingT,
 	}
 }
 
+type GoldenHelper interface {
+	CmpOpts() cmp.Options
+	JSONTransform(value map[string]any)
+}
+
+func CommonTimeFields() []string {
+	return []string{"timestamp", "modified", "created", "updated", "created_at", "updated_at"}
+}
+
+type IgnoreTimestamps struct {
+	Fields     []string
+	DummyValue time.Time
+	Format     string
+}
+
+func (it IgnoreTimestamps) CmpOpts() cmp.Options {
+	fields := it.Fields
+
+	if len(fields) == 0 {
+		fields = CommonTimeFields()
+	}
+
+	return cmp.Options{
+		cmpopts.IgnoreMapEntries(func(k string, _ any) bool {
+			return slices.Contains(fields, k)
+		}),
+	}
+}
+
+func (it IgnoreTimestamps) JSONTransform(value map[string]any) {
+	fields := it.Fields
+
+	if len(fields) == 0 {
+		fields = CommonTimeFields()
+	}
+
+	format := it.Format
+	if format == "" {
+		format = time.RFC3339
+	}
+
+	t := it.DummyValue
+	if t.IsZero() {
+		t = time.Date(2023, time.January, 10, 20, 6, 37, 0,
+			time.FixedZone("Europe/Stockholm", 3600))
+	}
+
+	dummy := t.Format(format)
+
+	var (
+		tSlice func(s []any)
+		tMap   func(m map[string]any)
+	)
+
+	tSlice = func(s []any) {
+		for i := range s {
+			switch v := s[i].(type) {
+			case []any:
+				tSlice(v)
+			case map[string]any:
+				tMap(v)
+			}
+		}
+	}
+
+	tMap = func(m map[string]any) {
+		for k := range m {
+			switch v := m[k].(type) {
+			case []any:
+				tSlice(v)
+			case map[string]any:
+				tMap(v)
+			default:
+				if !slices.Contains(fields, k) {
+					continue
+				}
+
+				m[k] = dummy
+			}
+		}
+	}
+
+	tMap(value)
+}
+
 // TestMessageAgainstGolden compares a protobuf message against the contents of
 // the file at the goldenPath. Run with regenerate set to true to create or
 // update the file.
@@ -58,7 +147,7 @@ func TestMessageAgainstGolden(
 	regenerate bool,
 	got proto.Message,
 	goldenPath string,
-	opts ...cmp.Option,
+	helpers ...GoldenHelper,
 ) {
 	t.Helper()
 
@@ -70,7 +159,22 @@ func TestMessageAgainstGolden(
 		}
 
 		data, err := opts.Marshal(got)
+		Must(t, err, "marshal proto message")
+
+		var obj map[string]any
+
+		err = json.Unmarshal(data, &obj)
+		Must(t, err, "unmarshal message for transform")
+
+		for i := range helpers {
+			helpers[i].JSONTransform(obj)
+		}
+
+		data, err = json.MarshalIndent(obj, "", "  ")
 		Must(t, err, "marshal message for storage in %q", goldenPath)
+
+		// End all files with a newline
+		data = append(data, '\n')
 
 		err = os.WriteFile(goldenPath, data, 0o600)
 		Must(t, err, "write golden file %q", goldenPath)
@@ -85,5 +189,13 @@ func TestMessageAgainstGolden(
 	err = protojson.Unmarshal(wantData, wantMessage)
 	Must(t, err, "unmarshal data from golden file %q", goldenPath)
 
-	EqualMessageWithOptions(t, wantMessage, got, opts, "must match golden file %q", goldenPath)
+	var cmpOpts cmp.Options
+
+	for _, h := range helpers {
+		for _, opt := range h.CmpOpts() {
+			cmpOpts = append(cmpOpts, opt)
+		}
+	}
+
+	EqualMessageWithOptions(t, wantMessage, got, cmpOpts, "must match golden file %q", goldenPath)
 }
