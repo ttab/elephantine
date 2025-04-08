@@ -173,6 +173,14 @@ func TestMessageAgainstGolden(
 		data, err = json.MarshalIndent(obj, "", "  ")
 		Must(t, err, "marshal message for storage in %q", goldenPath)
 
+		proto.Reset(got)
+
+		err = protojson.Unmarshal(data, got)
+		Must(t, err, "roundtrip back to proto message")
+
+		data, err = opts.Marshal(got)
+		Must(t, err, "marshal roundtripped proto message")
+
 		// End all files with a newline
 		data = append(data, '\n')
 
