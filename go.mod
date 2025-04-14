@@ -6,7 +6,7 @@ require (
 	github.com/MicahParks/keyfunc/v3 v3.3.10
 	github.com/aws/aws-sdk-go-v2 v1.36.3
 	github.com/aws/aws-sdk-go-v2/config v1.29.12
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.58.0
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.58.2
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
