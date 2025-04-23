@@ -108,10 +108,12 @@ func SafeClose(logger *slog.Logger, name string, c io.Closer) {
 	}
 }
 
-// Close a resource and joins the error to the outError if the close fails.
+// Close a resource and joins the error to the outError if the close fails. Will
+// ignore os.ErrClosed so it's safe to use together with "manual" closing of
+// files.
 func Close(name string, c io.Closer, outErr *error) {
 	err := c.Close()
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrClosed) {
 		*outErr = errors.Join(*outErr, fmt.Errorf("close %s: %w", name, err))
 	}
 }
