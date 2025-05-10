@@ -15,9 +15,18 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+type APIServerOption func(s *APIServer)
+
+func APIServerCORSHosts(hosts ...string) APIServerOption {
+	return func(s *APIServer) {
+		s.CORS.Hosts = hosts
+	}
+}
+
 func NewAPIServer(
 	logger *slog.Logger,
 	addr string, profileAddr string,
+	opts ...APIServerOption,
 ) *APIServer {
 	health := NewHealthServer(logger, profileAddr)
 
@@ -61,6 +70,7 @@ func newAPIServer(
 	logger *slog.Logger, testServer bool,
 	addr string, profileAddr string,
 	mux *http.ServeMux, handler *handlerWrapper, health *HealthServer,
+	opts ...APIServerOption,
 ) *APIServer {
 	s := APIServer{
 		testServer:  testServer,
@@ -77,6 +87,10 @@ func newAPIServer(
 			AllowedMethods:         []string{"GET", "POST"},
 			AllowedHeaders:         []string{"Authorization", "Content-Type"},
 		},
+	}
+
+	for _, o := range opts {
+		o(&s)
 	}
 
 	s.Mux.Handle("GET /health/alive", http.HandlerFunc(func(
