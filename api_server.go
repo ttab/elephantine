@@ -30,7 +30,16 @@ func NewAPIServer(
 ) *APIServer {
 	health := NewHealthServer(logger, profileAddr)
 
-	return newAPIServer(logger, false, addr, profileAddr, http.NewServeMux(), &handlerWrapper{}, health)
+	return newAPIServer(
+		logger,
+		false,
+		addr,
+		profileAddr,
+		http.NewServeMux(),
+		&handlerWrapper{},
+		health,
+		opts...,
+	)
 }
 
 type Cleaner interface {
@@ -40,6 +49,7 @@ type Cleaner interface {
 func NewTestAPIServer(
 	t Cleaner,
 	logger *slog.Logger,
+	opts ...APIServerOption,
 ) *APIServer {
 	mux := http.NewServeMux()
 
@@ -55,7 +65,9 @@ func NewTestAPIServer(
 
 	return newAPIServer(logger, true,
 		testServer.Listener.Addr().String(),
-		healthServer.Addr(), mux, &handler, healthServer)
+		healthServer.Addr(), mux, &handler, healthServer,
+		opts...,
+	)
 }
 
 type handlerWrapper struct {
