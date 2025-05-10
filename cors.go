@@ -5,12 +5,15 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/ryanuber/go-glob"
 )
 
 type CORSOptions struct {
 	AllowInsecure          bool
 	AllowInsecureLocalhost bool
 	Hosts                  []string
+	HostPatterns           []string
 	AllowedMethods         []string
 	AllowedHeaders         []string
 	MaxAgeSeconds          int
@@ -74,6 +77,12 @@ func validOrigin(origin string, opts CORSOptions) bool {
 
 	for _, h := range opts.Hosts {
 		if host == h || strings.HasSuffix(host, "."+h) {
+			return true
+		}
+	}
+
+	for _, h := range opts.HostPatterns {
+		if glob.Glob(h, host) {
 			return true
 		}
 	}
