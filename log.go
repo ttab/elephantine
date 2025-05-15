@@ -24,6 +24,8 @@ const (
 	LogKeyCountMetric = "count_metric"
 	// LogKeyDocumentUUID is the UUID of a document.
 	LogKeyDocumentUUID = "document_uuid"
+	// LogKeyDocumentUUID is the type of a document.
+	LogKeyDocumentType = "document_type"
 	// LogKeyDocumentVersion is the version of a document.
 	LogKeyDocumentVersion = "document_version"
 	// LogKeyDocumentStatus is the status of a document.
