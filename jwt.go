@@ -50,8 +50,6 @@ func (c JWTClaims) HasAnyScope(names ...string) bool {
 	return false
 }
 
-const authInfoCtxKey ctxKey = 1
-
 // AuthInfo is used to add authentication information to a request context.
 type AuthInfo struct {
 	Token  string

@@ -24,8 +24,10 @@ const (
 	LogKeyCountMetric = "count_metric"
 	// LogKeyDocumentUUID is the UUID of a document.
 	LogKeyDocumentUUID = "document_uuid"
-	// LogKeyDocumentUUID is the type of a document.
+	// LogKeyDocumentType is the type of a document.
 	LogKeyDocumentType = "document_type"
+	// LogKeyDocumenTitle is the title of a document.
+	LogKeyDocumentTitle = "document_title"
 	// LogKeyDocumentVersion is the version of a document.
 	LogKeyDocumentVersion = "document_version"
 	// LogKeyDocumentStatus is the status of a document.
@@ -122,7 +124,10 @@ func SetUpLogger(logLevel string, w io.Writer) *slog.Logger {
 
 type ctxKey int
 
-const logCtxKey ctxKey = 1
+const (
+	logCtxKey      ctxKey = 1
+	authInfoCtxKey ctxKey = 2
+)
 
 // LogMetadataMiddleware wraps an http.Handler with a middleware that adds a log
 // metadata map to the request context.
