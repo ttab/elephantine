@@ -44,6 +44,14 @@ func PInt32(n *int32) pgtype.Int4 {
 	}
 }
 
+// Int64 converts a int64 to a pgtype.Int8.
+func Int64(n int64) pgtype.Int8 {
+	return pgtype.Int8{
+		Int64: n,
+		Valid: true,
+	}
+}
+
 // PInt64 converts a *int64 to a pgtype.Int8.
 func PInt64(n *int64) pgtype.Int8 {
 	if n == nil {
