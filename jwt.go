@@ -91,10 +91,23 @@ func ScopePrefixRegexp(prefix string) *regexp.Regexp {
 	if prefix == "" {
 		return nil
 	}
+
 	return regexp.MustCompile(fmt.Sprintf("\\b%s", regexp.QuoteMeta(prefix)))
 }
 
-func newJWTAuthInfoParser(keyfunc jwt.Keyfunc, opts JWTAuthInfoParserOptions) *JWTAuthInfoParser {
+func newJWTAuthInfoParser(
+	ctx context.Context,
+	keyfunc jwt.Keyfunc,
+	opts JWTAuthInfoParserOptions,
+) *JWTAuthInfoParser {
+	cache := ttlcache.New[string, AuthInfo]()
+
+	go func() {
+		go cache.Start()
+		<-ctx.Done()
+		cache.Stop()
+	}()
+
 	return &JWTAuthInfoParser{
 		keyfunc: keyfunc,
 		validator: jwt.NewValidator(
@@ -102,7 +115,7 @@ func newJWTAuthInfoParser(keyfunc jwt.Keyfunc, opts JWTAuthInfoParserOptions) *J
 			jwt.WithIssuer(opts.Issuer),
 			jwt.WithAudience(opts.Audience),
 		),
-		cache:       ttlcache.New[string, AuthInfo](),
+		cache:       cache,
 		scopePrefix: ScopePrefixRegexp(opts.ScopePrefix),
 	}
 }
@@ -112,11 +125,12 @@ func NewJWKSAuthInfoParser(ctx context.Context, jwksUrl string, opts JWTAuthInfo
 	if err != nil {
 		return nil, fmt.Errorf("could not create keyfunc: %w", err)
 	}
-	return newJWTAuthInfoParser(k.Keyfunc, opts), nil
+
+	return newJWTAuthInfoParser(ctx, k.Keyfunc, opts), nil
 }
 
-func NewStaticAuthInfoParser(key ecdsa.PublicKey, opts JWTAuthInfoParserOptions) *JWTAuthInfoParser {
-	return newJWTAuthInfoParser(func(t *jwt.Token) (any, error) {
+func NewStaticAuthInfoParser(ctx context.Context, key ecdsa.PublicKey, opts JWTAuthInfoParserOptions) *JWTAuthInfoParser {
+	return newJWTAuthInfoParser(ctx, func(t *jwt.Token) (any, error) {
 		return &key, nil
 	}, opts)
 }
