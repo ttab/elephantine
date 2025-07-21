@@ -108,13 +108,21 @@ func newJWTAuthInfoParser(
 		cache.Stop()
 	}()
 
+	parserOpts := []jwt.ParserOption{
+		jwt.WithLeeway(5 * time.Second),
+	}
+
+	if opts.Issuer != "" {
+		parserOpts = append(parserOpts, jwt.WithIssuer(opts.Issuer))
+	}
+
+	if opts.Audience != "" {
+		parserOpts = append(parserOpts, jwt.WithAudience(opts.Audience))
+	}
+
 	return &JWTAuthInfoParser{
-		keyfunc: keyfunc,
-		validator: jwt.NewValidator(
-			jwt.WithLeeway(5*time.Second),
-			jwt.WithIssuer(opts.Issuer),
-			jwt.WithAudience(opts.Audience),
-		),
+		keyfunc:     keyfunc,
+		validator:   jwt.NewValidator(parserOpts...),
 		cache:       cache,
 		scopePrefix: ScopePrefixRegexp(opts.ScopePrefix),
 	}
