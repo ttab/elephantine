@@ -81,13 +81,6 @@ func OpenIDConnectConfigFromURL(
 	return &conf, nil
 }
 
-// OpenIDConnectParameters
-//
-// Deprecated: Use AuthenticationCLIFlags() instead.
-func OpenIDConnectParameters() []cli.Flag {
-	return AuthenticationCLIFlags()
-}
-
 // AuthenticationCLIFlags returns all the CLI flags that are needed to later
 // call AuthenticationConfigFromCLI with the resulting cli.Context.
 func AuthenticationCLIFlags() []cli.Flag {
@@ -95,10 +88,6 @@ func AuthenticationCLIFlags() []cli.Flag {
 		&cli.StringFlag{
 			Name:    "oidc-config",
 			EnvVars: []string{"OIDC_CONFIG"},
-		},
-		&cli.StringFlag{
-			Name:    "oidc-config-parameter",
-			EnvVars: []string{"OIDC_CONFIG_PARAMETER"},
 		},
 		&cli.StringFlag{
 			Name:    "jwt-audience",
@@ -115,16 +104,8 @@ func AuthenticationCLIFlags() []cli.Flag {
 			EnvVars: []string{"CLIENT_ID"},
 		},
 		&cli.StringFlag{
-			Name:    "client-id-parameter",
-			EnvVars: []string{"CLIENT_ID_PARAMETER"},
-		},
-		&cli.StringFlag{
 			Name:    "client-secret",
 			EnvVars: []string{"CLIENT_SECRET"},
-		},
-		&cli.StringFlag{
-			Name:    "client-secret-parameter",
-			EnvVars: []string{"CLIENT_SECRET_PARAMETER"},
 		},
 	}
 }
@@ -134,8 +115,7 @@ type AuthenticationConfig struct {
 	TokenSource oauth2.TokenSource
 	AuthParser  *JWTAuthInfoParser
 
-	c           *cli.Context
-	paramSource ParameterSource
+	c *cli.Context
 
 	m            sync.Mutex
 	credErr      error
@@ -144,19 +124,13 @@ type AuthenticationConfig struct {
 }
 
 func AuthenticationConfigFromCLI(
-	c *cli.Context, paramSource ParameterSource,
-	scopes []string,
+	c *cli.Context, scopes []string,
 ) (*AuthenticationConfig, error) {
 	conf := AuthenticationConfig{
-		c:           c,
-		paramSource: paramSource,
+		c: c,
 	}
 
-	oidcConfigURL, err := ResolveParameter(
-		c.Context, c, paramSource, "oidc-config")
-	if err != nil {
-		return nil, fmt.Errorf("resolve OIDC config parameter: %w", err)
-	}
+	oidcConfigURL := c.String("oidc-config")
 
 	oidcConfig, err := OpenIDConnectConfigFromURL(oidcConfigURL)
 	if err != nil {
@@ -196,7 +170,7 @@ func AuthenticationConfigFromCLI(
 func (conf *AuthenticationConfig) NewTokenSource(
 	ctx context.Context, scopes []string,
 ) (oauth2.TokenSource, error) {
-	err := conf.ensureCredentials(ctx)
+	err := conf.ensureCredentials()
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +185,7 @@ func (conf *AuthenticationConfig) NewTokenSource(
 	return clientCredentialsConf.TokenSource(ctx), nil
 }
 
-func (conf *AuthenticationConfig) ensureCredentials(ctx context.Context) error {
+func (conf *AuthenticationConfig) ensureCredentials() error {
 	conf.m.Lock()
 	defer conf.m.Unlock()
 
@@ -219,7 +193,7 @@ func (conf *AuthenticationConfig) ensureCredentials(ctx context.Context) error {
 		return conf.credErr
 	}
 
-	err := conf.resolveCredentials(ctx)
+	err := conf.resolveCredentials()
 	if err != nil {
 		conf.credErr = fmt.Errorf("resolve credentials: %w", err)
 
@@ -229,25 +203,13 @@ func (conf *AuthenticationConfig) ensureCredentials(ctx context.Context) error {
 	return nil
 }
 
-func (conf *AuthenticationConfig) resolveCredentials(ctx context.Context) error {
-	clientID, err := ResolveParameter(
-		ctx, conf.c, conf.paramSource, "client-id",
-	)
-	if err != nil {
-		return fmt.Errorf("resolve client id parameter: %w", err)
-	}
-
+func (conf *AuthenticationConfig) resolveCredentials() error {
+	clientID := conf.c.String("client-id")
 	if clientID == "" {
 		return errors.New("missing client ID")
 	}
 
-	clientSecret, err := ResolveParameter(
-		ctx, conf.c, conf.paramSource, "client-secret",
-	)
-	if err != nil {
-		return fmt.Errorf("resolve client secret parameter: %w", err)
-	}
-
+	clientSecret := conf.c.String("client-secret")
 	if clientSecret == "" {
 		return errors.New("missing client secret")
 	}
