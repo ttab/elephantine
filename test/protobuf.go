@@ -56,7 +56,50 @@ func EqualMessageWithOptions(t TestingT,
 
 type GoldenHelper interface {
 	CmpOpts() cmp.Options
-	JSONTransform(value map[string]any)
+	JSONTransform(value map[string]any) error
+}
+
+var _ GoldenHelper = IgnoreField[string]{}
+
+type IgnoreField[T any] struct {
+	Name       string
+	DummyValue T
+	Validator  func(v T) error
+}
+
+// CmpOpts implements GoldenHelper.
+func (fi IgnoreField[T]) CmpOpts() cmp.Options {
+	return cmp.Options{
+		cmpopts.IgnoreMapEntries(func(k string, _ any) bool {
+			return k == fi.Name
+		}),
+	}
+}
+
+// JSONTransform implements GoldenHelper.
+func (fi IgnoreField[T]) JSONTransform(value map[string]any) error {
+	return keyReplacement(value, func(m map[string]any, k string) error {
+		current, ok := m[fi.Name]
+		if !ok {
+			return nil
+		}
+
+		cast, ok := current.(T)
+		if !ok {
+			return fmt.Errorf("wrong type %T for %q", current, fi.Name)
+		}
+
+		if fi.Validator != nil {
+			err := fi.Validator(cast)
+			if err != nil {
+				return fmt.Errorf("validate original value: %w", err)
+			}
+		}
+
+		m[fi.Name] = fi.DummyValue
+
+		return nil
+	})
 }
 
 func CommonTimeFields() []string {
@@ -83,7 +126,7 @@ func (it IgnoreTimestamps) CmpOpts() cmp.Options {
 	}
 }
 
-func (it IgnoreTimestamps) JSONTransform(value map[string]any) {
+func (it IgnoreTimestamps) JSONTransform(value map[string]any) error {
 	fields := it.Fields
 
 	if len(fields) == 0 {
@@ -103,40 +146,70 @@ func (it IgnoreTimestamps) JSONTransform(value map[string]any) {
 
 	dummy := t.Format(format)
 
+	return keyReplacement(value, func(m map[string]any, k string) error {
+		if !slices.Contains(fields, k) {
+			return nil
+		}
+
+		m[k] = dummy
+
+		return nil
+	})
+}
+
+func keyReplacement(
+	value map[string]any,
+	fn func(m map[string]any, k string) error,
+) error {
 	var (
-		tSlice func(s []any)
-		tMap   func(m map[string]any)
+		tSlice func(s []any) error
+		tMap   func(m map[string]any) error
 	)
 
-	tSlice = func(s []any) {
+	tSlice = func(s []any) error {
 		for i := range s {
 			switch v := s[i].(type) {
 			case []any:
-				tSlice(v)
+				err := tSlice(v)
+				if err != nil {
+					return err
+				}
 			case map[string]any:
-				tMap(v)
+				err := tMap(v)
+				if err != nil {
+					return err
+				}
 			}
 		}
+
+		return nil
 	}
 
-	tMap = func(m map[string]any) {
+	tMap = func(m map[string]any) error {
 		for k := range m {
+			err := fn(m, k)
+			if err != nil {
+				return err
+			}
+
 			switch v := m[k].(type) {
 			case []any:
-				tSlice(v)
-			case map[string]any:
-				tMap(v)
-			default:
-				if !slices.Contains(fields, k) {
-					continue
+				err := tSlice(v)
+				if err != nil {
+					return err
 				}
-
-				m[k] = dummy
+			case map[string]any:
+				err := tMap(v)
+				if err != nil {
+					return err
+				}
 			}
 		}
+
+		return nil
 	}
 
-	tMap(value)
+	return tMap(value)
 }
 
 // TestMessageAgainstGolden compares a protobuf message against the contents of
@@ -150,6 +223,9 @@ func TestMessageAgainstGolden(
 	helpers ...GoldenHelper,
 ) {
 	t.Helper()
+
+	// Clone the message so that we don't affect our source data.
+	got = proto.Clone(got)
 
 	if regenerate {
 		opts := protojson.MarshalOptions{
@@ -167,7 +243,8 @@ func TestMessageAgainstGolden(
 		Must(t, err, "unmarshal message for transform")
 
 		for i := range helpers {
-			helpers[i].JSONTransform(obj)
+			err := helpers[i].JSONTransform(obj)
+			Must(t, err, "transform message for storage")
 		}
 
 		data, err = json.MarshalIndent(obj, "", "  ")
