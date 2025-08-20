@@ -95,7 +95,7 @@ func ScopePrefixRegexp(prefix string) *regexp.Regexp {
 	return regexp.MustCompile(fmt.Sprintf("\\b%s", regexp.QuoteMeta(prefix)))
 }
 
-func newJWTAuthInfoParser(
+func NewJWTAuthInfoParser(
 	ctx context.Context,
 	keyfunc jwt.Keyfunc,
 	opts JWTAuthInfoParserOptions,
@@ -134,11 +134,11 @@ func NewJWKSAuthInfoParser(ctx context.Context, jwksUrl string, opts JWTAuthInfo
 		return nil, fmt.Errorf("could not create keyfunc: %w", err)
 	}
 
-	return newJWTAuthInfoParser(ctx, k.Keyfunc, opts), nil
+	return NewJWTAuthInfoParser(ctx, k.Keyfunc, opts), nil
 }
 
 func NewStaticAuthInfoParser(ctx context.Context, key ecdsa.PublicKey, opts JWTAuthInfoParserOptions) *JWTAuthInfoParser {
-	return newJWTAuthInfoParser(ctx, func(t *jwt.Token) (any, error) {
+	return NewJWTAuthInfoParser(ctx, func(t *jwt.Token) (any, error) {
 		return &key, nil
 	}, opts)
 }
