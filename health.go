@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/pprof" //nolint:gosec
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -69,11 +70,20 @@ func NewTestHealthServer(logger *slog.Logger) *HealthServer {
 }
 
 func (s *HealthServer) Addr() string {
-	if s.testServer != nil {
-		return s.testServer.Listener.Addr().String()
+	var addr string
+
+	switch {
+	case s.testServer != nil:
+		addr = s.testServer.Listener.Addr().String()
+	default:
+		addr = s.server.Addr
 	}
 
-	return s.server.Addr
+	if strings.HasPrefix(addr, ":") {
+		addr = "localhost" + addr
+	}
+
+	return addr
 }
 
 func (s *HealthServer) setUpMux() *http.ServeMux {
