@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/urfave/cli/v2"
 	"golang.org/x/oauth2"
@@ -115,32 +114,48 @@ type AuthenticationConfig struct {
 	TokenSource oauth2.TokenSource
 	AuthParser  *JWTAuthInfoParser
 
-	c *cli.Context
+	s AuthenticationSettings
+}
 
-	m            sync.Mutex
-	credErr      error
-	clientID     string
-	clientSecret string
+type AuthenticationSettings struct {
+	OIDCConfig   string
+	Audience     string
+	ScopePrefix  string
+	ClientID     string
+	ClientSecret string
 }
 
 func AuthenticationConfigFromCLI(
 	c *cli.Context, scopes []string,
 ) (*AuthenticationConfig, error) {
+	return AuthenticationConfigFromSettings(
+		c.Context,
+		AuthenticationSettings{
+			OIDCConfig:   c.String("oidc-config"),
+			ClientID:     c.String("client-id"),
+			ClientSecret: c.String("client-secret"),
+			Audience:     c.String("jwt-audience"),
+			ScopePrefix:  c.String("jwt-scope-prefix"),
+		},
+		scopes)
+}
+
+func AuthenticationConfigFromSettings(
+	ctx context.Context, settings AuthenticationSettings, scopes []string,
+) (*AuthenticationConfig, error) {
 	conf := AuthenticationConfig{
-		c: c,
+		s: settings,
 	}
 
-	oidcConfigURL := c.String("oidc-config")
-
-	oidcConfig, err := OpenIDConnectConfigFromURL(oidcConfigURL)
+	oidcConfig, err := OpenIDConnectConfigFromURL(settings.OIDCConfig)
 	if err != nil {
-		return nil, fmt.Errorf("load OIDC config from %q: %w", oidcConfigURL, err)
+		return nil, fmt.Errorf("load OIDC config from %q: %w", settings.OIDCConfig, err)
 	}
 
 	conf.OIDCConfig = oidcConfig
 
 	if len(scopes) != 0 {
-		ts, err := conf.NewTokenSource(c.Context, scopes)
+		ts, err := conf.NewTokenSource(ctx, scopes)
 		if err != nil {
 			return nil, fmt.Errorf("create token source: %w", err)
 		}
@@ -148,15 +163,12 @@ func AuthenticationConfigFromCLI(
 		conf.TokenSource = ts
 	}
 
-	audience := c.String("jwt-audience")
-	prefix := c.String("jwt-scope-prefix")
-
 	authInfoParser, err := NewJWKSAuthInfoParser(
-		c.Context, oidcConfig.JwksURI,
+		ctx, oidcConfig.JwksURI,
 		JWTAuthInfoParserOptions{
 			Issuer:      oidcConfig.Issuer,
-			Audience:    audience,
-			ScopePrefix: prefix,
+			Audience:    settings.Audience,
+			ScopePrefix: settings.ScopePrefix,
 		})
 	if err != nil {
 		return nil, fmt.Errorf("retrieve JWKS: %w", err)
@@ -170,52 +182,20 @@ func AuthenticationConfigFromCLI(
 func (conf *AuthenticationConfig) NewTokenSource(
 	ctx context.Context, scopes []string,
 ) (oauth2.TokenSource, error) {
-	err := conf.ensureCredentials()
-	if err != nil {
-		return nil, err
+	if conf.s.ClientID == "" {
+		return nil, errors.New("missing client ID")
+	}
+
+	if conf.s.ClientSecret == "" {
+		return nil, errors.New("missing client secret")
 	}
 
 	clientCredentialsConf := clientcredentials.Config{
-		ClientID:     conf.clientID,
-		ClientSecret: conf.clientSecret,
+		ClientID:     conf.s.ClientID,
+		ClientSecret: conf.s.ClientSecret,
 		TokenURL:     conf.OIDCConfig.TokenEndpoint,
 		Scopes:       scopes,
 	}
 
 	return clientCredentialsConf.TokenSource(ctx), nil
-}
-
-func (conf *AuthenticationConfig) ensureCredentials() error {
-	conf.m.Lock()
-	defer conf.m.Unlock()
-
-	if conf.credErr != nil {
-		return conf.credErr
-	}
-
-	err := conf.resolveCredentials()
-	if err != nil {
-		conf.credErr = fmt.Errorf("resolve credentials: %w", err)
-
-		return conf.credErr
-	}
-
-	return nil
-}
-
-func (conf *AuthenticationConfig) resolveCredentials() error {
-	clientID := conf.c.String("client-id")
-	if clientID == "" {
-		return errors.New("missing client ID")
-	}
-
-	clientSecret := conf.c.String("client-secret")
-	if clientSecret == "" {
-		return errors.New("missing client secret")
-	}
-
-	conf.clientID = clientID
-	conf.clientSecret = clientSecret
-
-	return nil
 }
