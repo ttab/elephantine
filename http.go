@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -276,5 +277,95 @@ func (ci *HTTPClientInstrumentation) instrumentInFlight(client string, next http
 		defer ci.inFlight.WithLabelValues(client).Dec()
 
 		return next.RoundTrip(r)
+	}
+}
+
+// NewHTTPClient returns a http.Client configured with timeouts and connection
+// limits. The default request timeout, including time for response read is 10
+// seconds. Use the option functions to customise.
+func NewHTTPClient(
+	timeout time.Duration,
+	opts ...HTTPClientOption,
+) *http.Client {
+	o := HTTPClientOptions{
+		client: &http.Client{
+			Timeout: timeout,
+		},
+		transport: &http.Transport{
+			TLSHandshakeTimeout:   min(3*time.Second, timeout/2),
+			MaxIdleConns:          32,
+			MaxIdleConnsPerHost:   6,
+			IdleConnTimeout:       90 * time.Second,
+			MaxConnsPerHost:       12,
+			ResponseHeaderTimeout: min(5*time.Second, timeout/2),
+		},
+		dialer: &net.Dialer{
+			Timeout: DialTimeoutExternal,
+		},
+	}
+
+	o.transport.DialContext = o.dialer.DialContext
+	o.client.Transport = o.transport
+
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	return o.client
+}
+
+type HTTPClientOption func(opts *HTTPClientOptions)
+
+type HTTPClientOptions struct {
+	client    *http.Client
+	transport *http.Transport
+	dialer    *net.Dialer
+}
+
+const (
+	DialTimeoutInternal = 1 * time.Second
+	DialTimeoutExternal = 5 * time.Second
+	DialTimeoutSlow     = 10 * time.Second
+)
+
+func DialTimeout(d time.Duration) HTTPClientOption {
+	return func(opts *HTTPClientOptions) {
+		opts.dialer.Timeout = d
+	}
+}
+
+func TLSHandshakeTimeout(d time.Duration) HTTPClientOption {
+	return func(opts *HTTPClientOptions) {
+		opts.transport.TLSHandshakeTimeout = d
+	}
+}
+
+func ResponseHeaderTimeout(d time.Duration) HTTPClientOption {
+	return func(opts *HTTPClientOptions) {
+		opts.transport.ResponseHeaderTimeout = d
+	}
+}
+
+// LongpollClient is syntactic sugar for setting the response header timeout to
+// 0 (no timeout), can be used to communicate intent.
+func LongpollClient() HTTPClientOption {
+	return ResponseHeaderTimeout(0)
+}
+
+func IdleConnections(
+	maxIdle int,
+	maxIdlePerHost int,
+	idleConnTimeout time.Duration,
+) HTTPClientOption {
+	return func(opts *HTTPClientOptions) {
+		opts.transport.MaxIdleConns = maxIdle
+		opts.transport.MaxConnsPerHost = maxIdlePerHost
+		opts.transport.IdleConnTimeout = idleConnTimeout
+	}
+}
+
+func MaxConnectionsPerHost(n int) HTTPClientOption {
+	return func(opts *HTTPClientOptions) {
+		opts.transport.MaxConnsPerHost = n
 	}
 }
