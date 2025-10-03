@@ -13,6 +13,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"golang.org/x/oauth2"
 )
 
 // HTTPError can be used to describe a non-OK response. Either as an error value
@@ -343,6 +344,16 @@ func TLSHandshakeTimeout(d time.Duration) HTTPClientOption {
 func ResponseHeaderTimeout(d time.Duration) HTTPClientOption {
 	return func(opts *HTTPClientOptions) {
 		opts.transport.ResponseHeaderTimeout = d
+	}
+}
+
+// Wraps the client transport with an oauth2.Transport.
+func WithTokenSource(source oauth2.TokenSource) HTTPClientOption {
+	return func(opts *HTTPClientOptions) {
+		opts.client.Transport = &oauth2.Transport{
+			Source: source,
+			Base:   opts.client.Transport,
+		}
 	}
 }
 
