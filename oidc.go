@@ -157,15 +157,6 @@ func AuthenticationConfigFromSettings(
 	conf.OIDCConfig = oidcConfig
 
 	if len(scopes) != 0 {
-		// Ensure that we use an http.Client with timeouts when fetching
-		// tokens.
-		_, hasTokenClient := ctx.Value(oauth2.HTTPClient).(*http.Client)
-		if !hasTokenClient {
-			client := NewHTTPClient(5 * time.Second)
-
-			ctx = context.WithValue(ctx, oauth2.HTTPClient, client)
-		}
-
 		ts, err := conf.NewTokenSource(ctx, scopes)
 		if err != nil {
 			return nil, fmt.Errorf("create token source: %w", err)
@@ -206,6 +197,15 @@ func (conf *AuthenticationConfig) NewTokenSource(
 		ClientSecret: conf.s.ClientSecret,
 		TokenURL:     conf.OIDCConfig.TokenEndpoint,
 		Scopes:       scopes,
+	}
+
+	// Ensure that we use an http.Client with timeouts when fetching
+	// tokens.
+	_, hasTokenClient := ctx.Value(oauth2.HTTPClient).(*http.Client)
+	if !hasTokenClient {
+		client := NewHTTPClient(5 * time.Second)
+
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, client)
 	}
 
 	return clientCredentialsConf.TokenSource(ctx), nil
