@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"time"
 
 	"github.com/urfave/cli/v2"
 	"golang.org/x/oauth2"
@@ -195,6 +197,15 @@ func (conf *AuthenticationConfig) NewTokenSource(
 		ClientSecret: conf.s.ClientSecret,
 		TokenURL:     conf.OIDCConfig.TokenEndpoint,
 		Scopes:       scopes,
+	}
+
+	// Ensure that we use an http.Client with timeouts when fetching
+	// tokens.
+	_, hasTokenClient := ctx.Value(oauth2.HTTPClient).(*http.Client)
+	if !hasTokenClient {
+		client := NewHTTPClient(5 * time.Second)
+
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, client)
 	}
 
 	return clientCredentialsConf.TokenSource(ctx), nil
