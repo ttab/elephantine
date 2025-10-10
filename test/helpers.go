@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -99,14 +100,38 @@ func TestAgainstGolden[T any](
 		data, err := json.Marshal(got)
 		Must(t, err, "marshal result")
 
-		var obj map[string]any
+		var (
+			obj    any
+			objMap map[string]any
+		)
+
+		switch reflect.TypeOf(got).Kind() {
+		case reflect.Array:
+			obj = []any{}
+		case reflect.Map:
+		case reflect.Struct:
+			objMap = map[string]any{}
+			obj = objMap
+		default:
+			var z T
+
+			obj = z
+		}
 
 		err = json.Unmarshal(data, &obj)
 		Must(t, err, "unmarshal for transform")
 
 		for i := range helpers {
-			err := helpers[i].JSONTransform(obj)
-			Must(t, err, "transform for storage")
+			anyHelper, hasAnyHelper := helpers[i].(GoldenHelperForAny)
+
+			switch {
+			case objMap != nil:
+				err := helpers[i].JSONTransform(objMap)
+				Must(t, err, "transform for storage")
+			case hasAnyHelper:
+				err := anyHelper.JSONTransformAny(obj)
+				Must(t, err, "transform for storage")
+			}
 		}
 
 		data, err = json.MarshalIndent(obj, "", "  ")

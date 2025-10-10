@@ -59,6 +59,10 @@ type GoldenHelper interface {
 	JSONTransform(value map[string]any) error
 }
 
+type GoldenHelperForAny interface {
+	JSONTransformAny(value any) error
+}
+
 var _ GoldenHelper = IgnoreField[string]{}
 
 type IgnoreField[T any] struct {
