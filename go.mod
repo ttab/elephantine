@@ -3,11 +3,11 @@ module github.com/ttab/elephantine
 go 1.24.3
 
 require (
-	github.com/MicahParks/keyfunc/v3 v3.6.2
+	github.com/MicahParks/keyfunc/v3 v3.7.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
-	github.com/hashicorp/vault/api v1.21.0
+	github.com/hashicorp/vault/api v1.22.0
 	github.com/hashicorp/vault/api/auth/kubernetes v0.10.0
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/jellydator/ttlcache/v3 v3.4.0
@@ -16,9 +16,9 @@ require (
 	github.com/ryanuber/go-glob v1.0.0
 	github.com/twitchtv/twirp v8.1.3+incompatible
 	github.com/urfave/cli/v2 v2.27.7
-	golang.org/x/oauth2 v0.31.0
+	golang.org/x/oauth2 v0.32.0
 	golang.org/x/sync v0.17.0
-	google.golang.org/protobuf v1.36.9
+	google.golang.org/protobuf v1.36.10
 )
 
 require (
