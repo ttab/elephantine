@@ -24,7 +24,7 @@ func NewErrGroup(ctx context.Context, logger *slog.Logger) *ErrGroup {
 }
 
 // ErrGroup is meant to be used when we run "top level" subsystems in a
-// service. If a task panics it will be handled as a ErrTaskPanic error.
+// service. If a task panics it will be handled as a ErrPanicRecovered error.
 type ErrGroup struct {
 	logger *slog.Logger
 	grp    *errgroup.Group
@@ -39,7 +39,7 @@ func (eg *ErrGroup) Go(task string, fn func(ctx context.Context) error) {
 		defer eg.logger.Info("stopped task",
 			LogKeyName, task)
 
-		err := callWithRecover(eg.gCtx, fn)
+		err := CallWithRecover(eg.gCtx, fn)
 		if err != nil {
 			return fmt.Errorf("%s: %w", task, err)
 		}
@@ -65,7 +65,7 @@ func (eg *ErrGroup) GoWithRetries(
 		lastStateChange := time.Now()
 
 		for {
-			err := callWithRecover(eg.gCtx, fn)
+			err := CallWithRecover(eg.gCtx, fn)
 			if err == nil {
 				return nil
 			}
@@ -110,18 +110,18 @@ func (eg *ErrGroup) GoWithRetries(
 	})
 }
 
-type ErrTaskPanic struct {
+type ErrPanicRecovered struct {
 	PanicValue any
 }
 
-func (err ErrTaskPanic) Error() string {
+func (err ErrPanicRecovered) Error() string {
 	return fmt.Sprintf("recovered from panig: %v", err.PanicValue)
 }
 
-func callWithRecover(ctx context.Context, fn func(ctx context.Context) error) (outErr error) {
+func CallWithRecover(ctx context.Context, fn func(ctx context.Context) error) (outErr error) {
 	defer func() {
 		if r := recover(); r != nil {
-			outErr = ErrTaskPanic{PanicValue: r}
+			outErr = ErrPanicRecovered{PanicValue: r}
 		}
 	}()
 
