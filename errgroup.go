@@ -23,6 +23,8 @@ func NewErrGroup(ctx context.Context, logger *slog.Logger) *ErrGroup {
 	return &eg
 }
 
+// ErrGroup is meant to be used when we run "top level" subsystems in a
+// service. If a task panics it will be handled as a ErrTaskPanic error.
 type ErrGroup struct {
 	logger *slog.Logger
 	grp    *errgroup.Group
@@ -37,7 +39,7 @@ func (eg *ErrGroup) Go(task string, fn func(ctx context.Context) error) {
 		defer eg.logger.Info("stopped task",
 			LogKeyName, task)
 
-		err := fn(eg.gCtx)
+		err := callWithRecover(eg.gCtx, fn)
 		if err != nil {
 			return fmt.Errorf("%s: %w", task, err)
 		}
@@ -46,7 +48,7 @@ func (eg *ErrGroup) Go(task string, fn func(ctx context.Context) error) {
 	})
 }
 
-// GoWithRetries runs a task in a retry look. The retry counter will reset to
+// GoWithRetries runs a task in a retry loop. The retry counter will reset to
 // zero if more time than `resetAfter` has passed since the last error. This is
 // used to avoid creeping up on a retry limit over long periods of time.
 func (eg *ErrGroup) GoWithRetries(
@@ -63,7 +65,7 @@ func (eg *ErrGroup) GoWithRetries(
 		lastStateChange := time.Now()
 
 		for {
-			err := fn(eg.gCtx)
+			err := callWithRecover(eg.gCtx, fn)
 			if err == nil {
 				return nil
 			}
@@ -106,6 +108,24 @@ func (eg *ErrGroup) GoWithRetries(
 			}
 		}
 	})
+}
+
+type ErrTaskPanic struct {
+	PanicValue any
+}
+
+func (err ErrTaskPanic) Error() string {
+	return fmt.Sprintf("recovered from panig: %v", err.PanicValue)
+}
+
+func callWithRecover(ctx context.Context, fn func(ctx context.Context) error) (outErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			outErr = ErrTaskPanic{PanicValue: r}
+		}
+	}()
+
+	return fn(ctx)
 }
 
 func (eg *ErrGroup) Wait() error {
