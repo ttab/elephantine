@@ -110,6 +110,10 @@ func (eg *ErrGroup) GoWithRetries(
 	})
 }
 
+func (eg *ErrGroup) Wait() error {
+	return eg.grp.Wait()
+}
+
 type ErrPanicRecovered struct {
 	PanicValue any
 }
@@ -126,10 +130,6 @@ func CallWithRecover(ctx context.Context, fn func(ctx context.Context) error) (o
 	}()
 
 	return fn(ctx)
-}
-
-func (eg *ErrGroup) Wait() error {
-	return eg.grp.Wait()
 }
 
 func StaticBackoff(wait time.Duration) BackoffFunction {
