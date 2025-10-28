@@ -1,6 +1,7 @@
 package test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -251,8 +252,8 @@ func TestMessageAgainstGolden(
 			Must(t, err, "transform message for storage")
 		}
 
-		data, err = json.MarshalIndent(obj, "", "  ")
-		Must(t, err, "marshal message for storage in %q", goldenPath)
+		data, err = json.Marshal(obj)
+		Must(t, err, "marshal message for roundtrip in %q", goldenPath)
 
 		proto.Reset(got)
 
@@ -262,10 +263,17 @@ func TestMessageAgainstGolden(
 		data, err = opts.Marshal(got)
 		Must(t, err, "marshal roundtripped proto message")
 
-		// End all files with a newline
-		data = append(data, '\n')
+		var buf bytes.Buffer
 
-		err = os.WriteFile(goldenPath, data, 0o600)
+		// Indent output because of this tomfoolery:
+		// https://github.com/golang/protobuf/issues/1121
+		err = json.Indent(&buf, data, "", "  ")
+		Must(t, err, "indent proto JSON")
+
+		// End all files with a newline
+		_ = buf.WriteByte('\n')
+
+		err = os.WriteFile(goldenPath, buf.Bytes(), 0o600)
 		Must(t, err, "write golden file %q", goldenPath)
 	}
 
