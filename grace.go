@@ -2,6 +2,7 @@ package elephantine
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -126,14 +127,19 @@ func (gs *GracefulShutdown) ShouldQuit() <-chan struct{} {
 	return gs.quit
 }
 
+var (
+	ErrGracefulStop = errors.New("stop requested")
+	ErrGracefulQuit = errors.New("quit requested")
+)
+
 // CancelOnStop returns a child context that will be cancelled when stop is
 // triggered.
 func (gs *GracefulShutdown) CancelOnStop(ctx context.Context) context.Context {
-	cCtx, cancel := context.WithCancel(ctx)
+	cCtx, cancel := context.WithCancelCause(ctx)
 
 	go func() {
 		<-gs.stop
-		cancel()
+		cancel(ErrGracefulStop)
 	}()
 
 	return cCtx
@@ -142,11 +148,11 @@ func (gs *GracefulShutdown) CancelOnStop(ctx context.Context) context.Context {
 // CancelOnQuit returns a child context that will be cancelled when quit is
 // triggered.
 func (gs *GracefulShutdown) CancelOnQuit(ctx context.Context) context.Context {
-	cCtx, cancel := context.WithCancel(ctx)
+	cCtx, cancel := context.WithCancelCause(ctx)
 
 	go func() {
 		<-gs.quit
-		cancel()
+		cancel(ErrGracefulQuit)
 	}()
 
 	return cCtx
