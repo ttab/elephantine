@@ -155,6 +155,14 @@ type APIServiceHandler interface {
 	PathPrefix() string
 }
 
+func (s *APIServer) RegisterAPIs(
+	opt ServiceOptions, apis ...APIServiceHandler,
+) {
+	for _, api := range apis {
+		s.RegisterAPI(api, opt)
+	}
+}
+
 func (s *APIServer) RegisterAPI(
 	api APIServiceHandler, opt ServiceOptions,
 ) {
