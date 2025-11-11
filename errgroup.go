@@ -119,7 +119,7 @@ type ErrPanicRecovered struct {
 }
 
 func (err ErrPanicRecovered) Error() string {
-	return fmt.Sprintf("recovered from panig: %v", err.PanicValue)
+	return fmt.Sprintf("recovered from panic: %v", err.PanicValue)
 }
 
 func CallWithRecover(ctx context.Context, fn func(ctx context.Context) error) (outErr error) {
