@@ -35,7 +35,6 @@ func NewAPIServer(
 		false,
 		addr,
 		profileAddr,
-		http.NewServeMux(),
 		&handlerWrapper{},
 		health,
 		opts...,
@@ -50,24 +49,27 @@ func NewTestAPIServer(
 	t Cleaner,
 	logger *slog.Logger,
 	opts ...APIServerOption,
-) *APIServer {
-	mux := http.NewServeMux()
-
-	var handler handlerWrapper
+) (*APIServer, *http.Client) {
+	handler := handlerWrapper{
+		// Will be replaced when the server starts up, only here to
+		// answer any early requests with 404:s.
+		Handler: http.NewServeMux(),
+	}
 
 	testServer := httptest.NewServer(&handler)
 	healthServer := NewTestHealthServer(logger)
 
 	t.Cleanup(func() {
+		testServer.CloseClientConnections()
 		testServer.Close()
 		_ = healthServer.Close()
 	})
 
 	return newAPIServer(logger, true,
 		testServer.Listener.Addr().String(),
-		healthServer.Addr(), mux, &handler, healthServer,
+		healthServer.Addr(), &handler, healthServer,
 		opts...,
-	)
+	), testServer.Client()
 }
 
 type handlerWrapper struct {
@@ -81,7 +83,7 @@ func (h *handlerWrapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func newAPIServer(
 	logger *slog.Logger, testServer bool,
 	addr string, profileAddr string,
-	mux *http.ServeMux, handler *handlerWrapper, health *HealthServer,
+	handler *handlerWrapper, health *HealthServer,
 	opts ...APIServerOption,
 ) *APIServer {
 	s := APIServer{
@@ -90,7 +92,7 @@ func newAPIServer(
 		addr:        addr,
 		profileAddr: profileAddr,
 		handler:     handler,
-		Mux:         mux,
+		Mux:         http.NewServeMux(),
 		Health:      health,
 		CORS: &CORSOptions{
 			AllowInsecure:          false,
