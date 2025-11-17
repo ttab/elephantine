@@ -50,7 +50,7 @@ func EqualMessageWithOptions(t TestingT,
 		t.Fatalf("%s: mismatch (-want +got):\n%s", msg, diff)
 	}
 
-	if testing.Verbose() {
+	if debug() {
 		t.Logf("success: "+format, a...)
 	}
 }
@@ -293,4 +293,114 @@ func TestMessageAgainstGolden(
 	}
 
 	EqualMessageWithOptions(t, wantMessage, got, cmpOpts, "must match golden file %q", goldenPath)
+}
+
+// TestMessagesAgainstGolden compares a slice of protobuf messages against the
+// contents of the file at the goldenPath. Run with regenerate set to true to
+// create or update the file.
+func TestMessagesAgainstGolden[T proto.Message](
+	t *testing.T,
+	regenerate bool,
+	gotSlice []T,
+	goldenPath string,
+	helpers ...GoldenHelper,
+) {
+	t.Helper()
+
+	if regenerate {
+		opts := protojson.MarshalOptions{
+			UseProtoNames: true,
+			Multiline:     true,
+			Indent:        "  ",
+		}
+
+		var (
+			rawSlice []json.RawMessage
+			buf      bytes.Buffer
+		)
+
+		for _, item := range gotSlice {
+			// Clone the message so that we don't affect our source data.
+			got := proto.Clone(item)
+
+			data, err := opts.Marshal(got)
+			Must(t, err, "marshal proto message")
+
+			var obj map[string]any
+
+			err = json.Unmarshal(data, &obj)
+			Must(t, err, "unmarshal message for transform")
+
+			for i := range helpers {
+				err := helpers[i].JSONTransform(obj)
+				Must(t, err, "transform message for storage")
+			}
+
+			data, err = json.Marshal(obj)
+			Must(t, err, "marshal message for roundtrip in %q", goldenPath)
+
+			proto.Reset(got)
+
+			err = protojson.Unmarshal(data, got)
+			Must(t, err, "roundtrip back to proto message")
+
+			data, err = opts.Marshal(got)
+			Must(t, err, "marshal roundtripped proto message")
+
+			buf.Reset()
+
+			// Indent output because of this tomfoolery:
+			// https://github.com/golang/protobuf/issues/1121
+			err = json.Indent(&buf, data, "", "  ")
+			Must(t, err, "indent proto JSON")
+
+			raw := make([]byte, buf.Len())
+
+			copy(raw, buf.Bytes())
+
+			rawSlice = append(rawSlice, raw)
+		}
+
+		data, err := json.MarshalIndent(rawSlice, "", "  ")
+		Must(t, err, "marshal slice")
+
+		err = os.WriteFile(goldenPath, data, 0o600)
+		Must(t, err, "write golden file %q", goldenPath)
+	}
+
+	wantData, err := os.ReadFile(goldenPath)
+	Must(t, err, "read from golden file %q", goldenPath)
+
+	var rawSlice []json.RawMessage
+
+	err = json.Unmarshal(wantData, &rawSlice)
+	Must(t, err, "unmarshal slice")
+
+	var cmpOpts cmp.Options
+
+	for _, h := range helpers {
+		cmpOpts = append(cmpOpts, h.CmpOpts()...)
+	}
+
+	for i := range max(len(rawSlice), len(gotSlice)) {
+		if i == len(gotSlice) {
+			t.Fatal("got less items than expected")
+		}
+
+		if i == len(rawSlice) {
+			t.Fatal("got more items than expected")
+		}
+
+		got := gotSlice[i]
+
+		wantValue := reflect.New(reflect.TypeOf(got).Elem())
+		wantMessage := wantValue.Interface().(proto.Message)
+
+		err = protojson.Unmarshal(rawSlice[i], wantMessage)
+		Must(t, err, "item %d: unmarshal data from golden file %q",
+			i+1, goldenPath)
+
+		EqualMessageWithOptions(t, wantMessage, got, cmpOpts,
+			"item %d: Must match golden file %q", i+1, goldenPath)
+	}
 }
