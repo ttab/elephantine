@@ -2,7 +2,6 @@ package test
 
 import (
 	"errors"
-	"testing"
 
 	"github.com/twitchtv/twirp"
 )
@@ -20,7 +19,7 @@ func IsTwirpError(
 		t.Fatalf("failed: expected a %q error: got %v", code, err)
 	}
 
-	if testing.Verbose() {
+	if debug() {
 		t.Logf("success: got a %q error", code)
 	}
 }

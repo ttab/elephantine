@@ -5,10 +5,24 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 )
+
+var (
+	testDebug     bool
+	readDebugOnce sync.Once
+)
+
+func debug() bool {
+	readDebugOnce.Do(func() {
+		testDebug = os.Getenv("TEST_DEBUG") == "true"
+	})
+
+	return testDebug
+}
 
 type TestingT interface {
 	Helper()
@@ -23,7 +37,7 @@ func Must(t TestingT, err error, format string, a ...any) {
 		t.Fatalf("failed: %s: %v", fmt.Sprintf(format, a...), err)
 	}
 
-	if testing.Verbose() {
+	if debug() {
 		t.Logf("success: "+format, a...)
 	}
 }
@@ -35,7 +49,7 @@ func MustNot(t TestingT, err error, format string, a ...any) {
 		t.Fatalf("failed: %s", fmt.Sprintf(format, a...))
 	}
 
-	if testing.Verbose() {
+	if debug() {
 		msg := fmt.Sprintf(format, a...)
 		t.Logf("success: %s: error message: %v", msg, err)
 	}
@@ -48,7 +62,7 @@ func NotNil[T any](t TestingT, v *T, format string, a ...any) {
 		t.Fatalf("failed: %s", fmt.Sprintf(format, a...))
 	}
 
-	if testing.Verbose() {
+	if debug() {
 		t.Logf("success: "+format, a...)
 	}
 }
@@ -62,7 +76,7 @@ func Equal[T comparable](t TestingT, want T, got T, format string, a ...any) {
 			fmt.Sprintf(format, a...), diff)
 	}
 
-	if testing.Verbose() {
+	if debug() {
 		t.Logf("success: "+format, a...)
 	}
 }
@@ -80,7 +94,7 @@ func EqualDiff[T any](t TestingT,
 		t.Fatalf("%s: mismatch (-want +got):\n%s", msg, diff)
 	}
 
-	if testing.Verbose() {
+	if debug() {
 		t.Logf("success: "+format, a...)
 	}
 }
@@ -177,7 +191,7 @@ func EqualDiffWithOptions[T any](
 		t.Fatalf("%s: mismatch (-want +got):\n%s", msg, diff)
 	}
 
-	if testing.Verbose() {
+	if debug() {
 		t.Logf("success: "+format, a...)
 	}
 }
