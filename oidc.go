@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
@@ -88,25 +88,25 @@ func AuthenticationCLIFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{
 			Name:    "oidc-config",
-			EnvVars: []string{"OIDC_CONFIG"},
+			Sources: cli.EnvVars("OIDC_CONFIG"),
 		},
 		&cli.StringFlag{
 			Name:    "jwt-audience",
 			Usage:   "String to validate the aud claim against",
-			EnvVars: []string{"JWT_AUDIENCE"},
+			Sources: cli.EnvVars("JWT_AUDIENCE"),
 		},
 		&cli.StringFlag{
 			Name:    "jwt-scope-prefix",
 			Usage:   "Prefix to strip from JWT scopes",
-			EnvVars: []string{"JWT_SCOPE_PREFIX"},
+			Sources: cli.EnvVars("JWT_SCOPE_PREFIX"),
 		},
 		&cli.StringFlag{
 			Name:    "client-id",
-			EnvVars: []string{"CLIENT_ID"},
+			Sources: cli.EnvVars("CLIENT_ID"),
 		},
 		&cli.StringFlag{
 			Name:    "client-secret",
-			EnvVars: []string{"CLIENT_SECRET"},
+			Sources: cli.EnvVars("CLIENT_SECRET"),
 		},
 	}
 }
@@ -128,16 +128,16 @@ type AuthenticationSettings struct {
 }
 
 func AuthenticationConfigFromCLI(
-	c *cli.Context, scopes []string,
+	ctx context.Context, cmd *cli.Command, scopes []string,
 ) (*AuthenticationConfig, error) {
 	return AuthenticationConfigFromSettings(
-		c.Context,
+		ctx,
 		AuthenticationSettings{
-			OIDCConfig:   c.String("oidc-config"),
-			ClientID:     c.String("client-id"),
-			ClientSecret: c.String("client-secret"),
-			Audience:     c.String("jwt-audience"),
-			ScopePrefix:  c.String("jwt-scope-prefix"),
+			OIDCConfig:   cmd.String("oidc-config"),
+			ClientID:     cmd.String("client-id"),
+			ClientSecret: cmd.String("client-secret"),
+			Audience:     cmd.String("jwt-audience"),
+			ScopePrefix:  cmd.String("jwt-scope-prefix"),
 		},
 		scopes)
 }
