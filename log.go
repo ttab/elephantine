@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime/debug"
 )
 
 // Log attribute keys used throughout the application.
@@ -134,6 +135,15 @@ const (
 func LogMetadataMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := WithLogMetadata(r.Context())
+
+		defer func() {
+			if p := recover(); p != nil {
+				slog.ErrorContext(ctx, "panic in handler",
+					"panic", p,
+					"stack", string(debug.Stack()),
+				)
+			}
+		}()
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
