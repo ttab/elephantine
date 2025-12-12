@@ -123,8 +123,8 @@ func runListener(
 			var notification *pgconn.Notification
 
 			select {
-			case <-ctx.Done():
-				return ctx.Err()
+			case <-gCtx.Done():
+				return gCtx.Err()
 			case notification = <-received:
 			}
 
