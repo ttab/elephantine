@@ -102,3 +102,44 @@ func (h *MetricsHelper) GaugeVec(
 
 	*o = g
 }
+
+func (h *MetricsHelper) Histogram(
+	o *prometheus.Histogram,
+	opts prometheus.HistogramOpts,
+) {
+	if h.err != nil {
+		return
+	}
+
+	hist := prometheus.NewHistogram(opts)
+
+	err := h.reg.Register(hist)
+	if err != nil {
+		h.err = fmt.Errorf("register %q histogram: %w", opts.Name, err)
+
+		return
+	}
+
+	*o = hist
+}
+
+func (h *MetricsHelper) HistogramVec(
+	o **prometheus.HistogramVec,
+	opts prometheus.HistogramOpts,
+	labels []string,
+) {
+	if h.err != nil {
+		return
+	}
+
+	hist := prometheus.NewHistogramVec(opts, labels)
+
+	err := h.reg.Register(hist)
+	if err != nil {
+		h.err = fmt.Errorf("register %q histogram vector: %w", opts.Name, err)
+
+		return
+	}
+
+	*o = hist
+}
