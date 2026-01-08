@@ -24,6 +24,12 @@ func debug() bool {
 	return testDebug
 }
 
+// Regenerate test fixtures will return true if the environment variable
+// REGENERATE is set to true.
+func Regenerate() bool {
+	return os.Getenv("REGENERATE") == "true"
+}
+
 type TestingT interface {
 	Helper()
 	Fatalf(format string, args ...any)
