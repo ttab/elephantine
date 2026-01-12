@@ -1,0 +1,270 @@
+{
+  "uri": "http://tt.se/media/text/231107-oktobervader-1d76cbf0",
+  "type": "text",
+  "originaltransmissionreference": "1d76cbf0-d14d-492e-9448-534af5fef6de",
+  "altids": {
+    "originaltransmissionreference": "1d76cbf0-d14d-492e-9448-534af5fef6de"
+  },
+  "charcount": 841,
+  "mimetype": "text/html",
+  "representationtype": "complete",
+  "sector": "INR",
+  "profile": "PUBL",
+  "version": "1",
+  "versioncreated": "2023-11-07T08:07:22+01:00",
+  "job": "594e970b-9ee6-4356-a6ca-ca548b9ba3ed",
+  "pubstatus": "usable",
+  "copyrightholder": "TT",
+  "language": "sv",
+  "urgency": 3,
+  "source": "TT",
+  "description_text": "Varm luft i söder och kall luft i norr gjorde att oktober bjöd på temperaturer som var omväxlande kallare och varmare än vanligt. I Norrland blev det lokalt den kallaste oktobermånaden på 30 år, visar SMHI:s sammanställning. Under oktober hann landet ha",
+  "body_text": "Kallaste oktober i norr på 30 år\nVäder TT\nVarm luft i söder och kall luft i norr gjorde att oktober bjöd på temperaturer som var omväxlande kallare och varmare än vanligt. I Norrland blev det lokalt den kallaste oktobermånaden på 30 år, visar SMHI:s sammanställning.\nUnder oktober hann landet ha meteorologisk sommar, höst och vinter. När månaden började var det fortfarande sommar i södra Svealand och Götaland och den 2 oktober kom vintern till de första stationerna i norra Norrland.\nMånadens lägsta temperatur, -25,7 grader, noterade SMHI i Nikkaluokta den 30 oktober. Det är den lägsta oktobertemperaturen som uppmätts i Sverige sedan 2006. Varmast var det i Kristianstad den 3 oktober, då temperaturen nådde 19,8.\nDen 20 oktober drog stormen Babet in över södra Sverige med kraftiga regn och vindbyar på upp till 33,2 meter per sekund.",
+  "headline": "Kallaste oktober i norr på 30 år",
+  "slug": "oktoberväder",
+  "slugline": "oktoberväder",
+  "genre": [
+    {
+      "code": "INR",
+      "scheme": "http://tt.se/spec/sector/1.0/",
+      "name": "Inrikes"
+    }
+  ],
+  "webprio": 3,
+  "associations": {
+    "a001": {
+      "byline": "Journalist Red/TT",
+      "description_text": "Oktober bjöd på omväxlande väder. Arkivbild.",
+      "mimetype": "image/jpeg",
+      "representationtype": "incomplete",
+      "type": "picture",
+      "uri": "http://tt.se/media/image/sdli5Sgl2I1-XM",
+      "renditions": {
+        "r00": {
+          "usage": "Hires",
+          "variant": "Normal",
+          "mimetype": "image/jpeg",
+          "href": "https://beta.tt.se/media/text/231107-oktobervader-1d76cbf0/a001_NormalHires.jpg",
+          "sizeinbytes": 29920588,
+          "width": 8256,
+          "height": 5504
+        },
+        "r01": {
+          "usage": "Preview",
+          "variant": "Normal",
+          "mimetype": "image/jpeg",
+          "href": "https://beta.tt.se/media/text/231107-oktobervader-1d76cbf0/a001_NormalPreview.jpg",
+          "sizeinbytes": 749998,
+          "width": 1024,
+          "height": 683
+        },
+        "r02": {
+          "usage": "Preview",
+          "variant": "Watermark",
+          "mimetype": "image/jpeg",
+          "href": "https://beta.tt.se/media/text/231107-oktobervader-1d76cbf0/a001_WatermarkPreview.jpg",
+          "sizeinbytes": 749998,
+          "width": 1024,
+          "height": 683
+        },
+        "r03": {
+          "usage": "Thumbnail",
+          "variant": "Normal",
+          "mimetype": "image/jpeg",
+          "href": "https://thumbnail.tt.se/media/text/231107-oktobervader-1d76cbf0/a001_NormalThumbnail.jpg",
+          "sizeinbytes": 56346,
+          "width": 256,
+          "height": 171
+        }
+      }
+    }
+  },
+  "bylines": [
+    {
+      "byline": "",
+      "firstname": "",
+      "lastname": "",
+      "role": "Redigering",
+      "email": "",
+      "internal": "true",
+      "phone": "",
+      "initials": "mah",
+      "affiliation": "TT"
+    }
+  ],
+  "advice": [
+    {
+      "lifetime": {
+        "code": "short"
+      }
+    }
+  ],
+  "$standard": {
+    "name": "TTNINJS",
+    "version": "1.3",
+    "schema": "https://tt.se/spec/ttninjs/ttninjs-schema_1.3.json"
+  },
+  "body_html5": "<html><head><title>Kallaste oktober i norr på 30 år</title></head><body><article> <section data-charcount=\"1308\"> <h1>Kallaste oktober i norr på 30 år</h1><div class=\"dat\"><span class=\"vignette\">Väder</span><span class=\"source\">TT</span></div><div class=\"bodytext\"> <p>Varm luft i söder och kall luft i norr gjorde att oktober bjöd på temperaturer som var omväxlande kallare och varmare än vanligt. I Norrland blev det lokalt den kallaste oktobermånaden på 30 år, visar SMHI:s sammanställning.</p> <p>Under oktober hann landet ha meteorologisk sommar, höst och vinter. När månaden började var det fortfarande sommar i södra Svealand och Götaland och den 2 oktober kom vintern till de första stationerna i norra Norrland.</p> <p>Månadens lägsta temperatur, -25,7 grader, noterade SMHI i Nikkaluokta den 30 oktober. Det är den lägsta oktobertemperaturen som uppmätts i Sverige sedan 2006. Varmast var det i Kristianstad den 3 oktober, då temperaturen nådde 19,8.</p> <p>Den 20 oktober drog stormen Babet in över södra Sverige med kraftiga regn och vindbyar på upp till 33,2 meter per sekund.</p></div> <figure><img uri=\"sdli5Sgl2I1-XM\" src=\"https://thumbnail.tt.se/media/text/231107-oktobervader-1d76cbf0/a001_NormalThumbnail.jpg\" alt=\"Oktober bjöd på omväxlande väder. Arkivbild.\" data-assoc-ref=\"a001\" data-uri=\"http://tt.se/media/image/sdli5Sgl2I1-XM\" data-preview-src=\"https://beta.tt.se/media/text/231107-oktobervader-1d76cbf0/a001_NormalPreview.jpg\"/><div class=\"byline\">Journalist Red/TT</div><figcaption>Oktober bjöd på omväxlande väder. Arkivbild.</figcaption></figure> </section> </article></body></html>",
+  "body_richhtml5": "<html><head><title>Kallaste oktober i norr på 30 år</title></head><body><article> <section data-charcount=\"1103\"> <h1>Kallaste oktober i norr på 30 år</h1><div class=\"dat\"><span class=\"vignette\">Väder</span><span class=\"source\">TT</span></div><div class=\"bodytext\"> <figure><img uri=\"sdli5Sgl2I1-XM\" src=\"https://thumbnail.tt.se/media/text/231107-oktobervader-1d76cbf0/a001_NormalThumbnail.jpg\" alt=\"Oktober bjöd på omväxlande väder. Arkivbild.\" data-assoc-ref=\"a001\" data-uri=\"http://tt.se/media/image/sdli5Sgl2I1-XM\" data-preview-src=\"https://beta.tt.se/media/text/231107-oktobervader-1d76cbf0/a001_NormalPreview.jpg\"/><div class=\"byline\">Journalist Red/TT</div><figcaption>Oktober bjöd på omväxlande väder. Arkivbild.</figcaption></figure><p>Varm luft i söder och kall luft i norr gjorde att oktober bjöd på temperaturer som var omväxlande kallare och varmare än vanligt. I Norrland blev det lokalt den kallaste oktobermånaden på 30 år, visar SMHI:s sammanställning.</p><p>Under oktober hann landet ha meteorologisk sommar, höst och vinter. När månaden började var det fortfarande sommar i södra Svealand och Götaland och den 2 oktober kom vintern till de första stationerna i norra Norrland.</p><p>Månadens lägsta temperatur, -25,7 grader, noterade SMHI i Nikkaluokta den 30 oktober. Det är den lägsta oktobertemperaturen som uppmätts i Sverige sedan 2006. Varmast var det i Kristianstad den 3 oktober, då temperaturen nådde 19,8.</p><p>Den 20 oktober drog stormen Babet in över södra Sverige med kraftiga regn och vindbyar på upp till 33,2 meter per sekund.</p></div> </section> </article></body></html>",
+  "body_ttnitf": "<TTNITF><HEAD><MODVER ID=\"1:00\" VER=\"04\"><DEST ID=\"1:05\">ALL</DEST><FIFO ID=\"1:20\" FFNO=\"27\"><FIFOVER ID=\"1:22\" FFVERNO=\"03\"><SERVID ID=\"1:30\">TT</SERVID><NR ID=\"1:40\">1d76cbf0-d14d-492e-9448-534af5fef6de</NR><PRODID ID=\"1:50\" TKOD=\"INR\"><DATESENT ID=\"1:70\">20231107</DATESENT><TIMESENT ID=\"1:80\">080722+0100</TIMESENT><UNO ID=\"1:100\">20231107:TT:1d76cbf0:0</UNO><RECVER ID=\"2:00\" VERNO=\"04\"><TEXTTYP ID=\"2:03\">01:PUBL</TEXTTYP><SLUGG ID=\"2:05\">oktoberv&auml;der</SLUGG><URG ID=\"2:10\" PRIO=\"3\"><HEADLINE ID=\"2:105\">Kallaste oktober i norr p&aring; 30 &aring;r</HEADLINE><HSOURCE ID=\"2:115\">TT</HSOURCE><CAPTION ID=\"2:120\">Varm luft i s&ouml;der och kall luft i norr gjorde att oktober bj&ouml;d p&aring; temperaturer som var omv&auml;xlande kallare och varmare &auml;n vanligt. I Norrland blev det lokalt den kallaste oktoberm&aring;naden p&aring; 30 &aring;r, visar SMHI:s sammanst&auml;llning. Under oktober hann landet ha</CAPTION><WRITER ID=\"2:122\">mah</WRITER><LANG ID=\"2:135\">sv</LANG><SIZEMODE ID=\"7:10\" SIZMOD=\"1\"><MAXSUBSIZE ID=\"7:20\">2549</MAXSUBSIZE><SIZEANNO ID=\"7:90\">841</SIZEANNO></HEAD><BODY ID=\"8:10\"><TEXT><RUBRIK>Kallaste oktober i norr p&aring; 30 &aring;r</RUBRIK><DAT><ORT>V&auml;der</ORT><SOURCE>TT</SOURCE></DAT><BRODTEXT> <P>Varm luft i s&ouml;der och kall luft i norr gjorde att oktober bj&ouml;d p&aring; temperaturer som var omv&auml;xlande kallare och varmare &auml;n vanligt. I Norrland blev det lokalt den kallaste oktoberm&aring;naden p&aring; 30 &aring;r, visar SMHI:s sammanst&auml;llning.</P> <P>Under oktober hann landet ha meteorologisk sommar, h&ouml;st och vinter. N&auml;r m&aring;naden b&ouml;rjade var det fortfarande sommar i s&ouml;dra Svealand och G&ouml;taland och den 2 oktober kom vintern till de f&ouml;rsta stationerna i norra Norrland.</P> <P>M&aring;nadens l&auml;gsta temperatur, -25,7 grader, noterade SMHI i Nikkaluokta den 30 oktober. Det &auml;r den l&auml;gsta oktobertemperaturen som uppm&auml;tts i Sverige sedan 2006. Varmast var det i Kristianstad den 3 oktober, d&aring; temperaturen n&aring;dde 19,8.</P> <P>Den 20 oktober drog stormen Babet in &ouml;ver s&ouml;dra Sverige med kraftiga regn och vindbyar p&aring; upp till 33,2 meter per sekund.</P></BRODTEXT><BILD><BILDFIL>http://tt.se/media/image/sdli5Sgl2I1-XM</BILDFIL><BILDTEXT><P>Oktober bj&ouml;d p&aring; omv&auml;xlande v&auml;der. Arkivbild.</P></BILDTEXT><BILDSKAPARE>Journalist Red/TT</BILDSKAPARE></BILD></TEXT></BODY><ENDSIZE ID=\"9:10\">841</ENDSIZE></TTNITF>",
+  "_matchObject": {
+    "imnml.name": [
+      "oktoberväder"
+    ],
+    "imnml.kundarea": [],
+    "imnml.texttyp": [
+      "PUBL"
+    ],
+    "imnml.section": [
+      "Inrikes"
+    ],
+    "imnml.department": [
+      "Nyheter"
+    ],
+    "imnml.artikeltyp": [
+      "ARTIKEL"
+    ],
+    "imnml.webbprio": [
+      "3"
+    ],
+    "imnml.source": "TT",
+    "imnml.length": 841,
+    "imnml.notis": "yes"
+  },
+  "revisions": [
+    {
+      "uri": "http://tt.se/media/text/231107-oktobervader-1d76cbf0",
+      "slug": "oktoberväder",
+      "versioncreated": "2023-11-07T08:07:22+01:00"
+    }
+  ],
+  "_associations": [
+    {
+      "byline": "Journalist Red/TT",
+      "description_text": "Oktober bjöd på omväxlande väder. Arkivbild.",
+      "mimetype": "image/jpeg",
+      "representationtype": "incomplete",
+      "type": "picture",
+      "uri": "http://tt.se/media/image/sdli5Sgl2I1-XM",
+      "renditions": {
+        "r00": {
+          "usage": "Hires",
+          "variant": "Normal",
+          "mimetype": "image/jpeg",
+          "href": "sdl://i5Sgl2I1-XM/HIGHRES_1",
+          "sizeinbytes": 29920588,
+          "width": 8256,
+          "height": 5504
+        },
+        "r01": {
+          "usage": "Preview",
+          "variant": "Normal",
+          "mimetype": "image/jpeg",
+          "href": "https://preview.sdl.no/v1/tt/5zpwOlU8nCAahWNMoU0hpA/i5Sgl2I1-XM",
+          "sizeinbytes": 749998,
+          "width": 1024,
+          "height": 683
+        },
+        "r02": {
+          "usage": "Preview",
+          "variant": "Watermark",
+          "mimetype": "image/jpeg",
+          "href": "https://preview.sdl.no/v1/tt/KOj3dDJIHMtB1O97HH1jow/i5Sgl2I1-XM",
+          "sizeinbytes": 749998,
+          "width": 1024,
+          "height": 683
+        },
+        "r03": {
+          "usage": "Thumbnail",
+          "variant": "Normal",
+          "mimetype": "image/jpeg",
+          "href": "https://preview.sdl.no/v1/tt/MMV-Z5PZpNAPiUOCF82B0w/i5Sgl2I1-XM",
+          "sizeinbytes": 56346,
+          "width": 256,
+          "height": 171
+        }
+      }
+    }
+  ],
+  "_search_term_suggest": {
+    "input": [
+      "kallaste oktober i norr på  år",
+      "varm",
+      "luft",
+      "i",
+      "söder",
+      "och",
+      "kall",
+      "luft",
+      "i",
+      "norr",
+      "gjorde",
+      "att",
+      "oktober",
+      "bjöd",
+      "på",
+      "temperaturer",
+      "som",
+      "var",
+      "omväxlande",
+      "kallare",
+      "och",
+      "varmare",
+      "än",
+      "vanligt",
+      "i",
+      "norrland",
+      "blev",
+      "det",
+      "lokalt",
+      "den",
+      "kallaste",
+      "oktobermånaden",
+      "på",
+      "år",
+      "visar",
+      "smhis",
+      "sammanställning",
+      "under",
+      "oktober",
+      "hann",
+      "landet",
+      "ha"
+    ]
+  },
+  "_weekday": "tue",
+  "product": [
+    {
+      "code": "TTINR",
+      "scheme": "http://tt.se/spec/product/1.0",
+      "name": "Inrikes"
+    },
+    {
+      "code": "TWINR",
+      "scheme": "http://tt.se/spec/product/1.0",
+      "name": "Webb inrikes"
+    },
+    {
+      "code": "TTINR0",
+      "name": "Arkiv",
+      "scheme": "http://tt.se/spec/product/1.0"
+    },
+    {
+      "code": "TWINR0",
+      "name": "Arkiv",
+      "scheme": "http://tt.se/spec/product/1.0"
+    }
+  ],
+  "_product": [
+    "TTINR",
+    "TWINR",
+    "TTINR0",
+    "TWINR0"
+  ],
+  "_ident": [
+    "1d76cbf0-d14d-492e-9448-534af5fef6de",
+    "231107-oktobervader-1d76cbf0"
+  ],
+  "datetime": "2023-11-07T08:07:22+01:00",
+  "_tstamp": "2023-11-07T08:07:22+01:00"
+}

@@ -1,6 +1,6 @@
 module github.com/ttab/elephantine
 
-go 1.24.3
+go 1.24.4
 
 require (
 	github.com/MicahParks/keyfunc/v3 v3.7.0
@@ -11,9 +11,11 @@ require (
 	github.com/hashicorp/vault/api/auth/kubernetes v0.10.0
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/jellydator/ttlcache/v3 v3.4.0
+	github.com/json-iterator/go v1.1.12
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/ryanuber/go-glob v1.0.0
+	github.com/ttab/ttninjs v0.1.0
 	github.com/twitchtv/twirp v8.1.3+incompatible
 	github.com/urfave/cli/v3 v3.6.1
 	golang.org/x/oauth2 v0.33.0
@@ -41,6 +43,8 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
+	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
