@@ -257,7 +257,7 @@ func (s *APIServer) ListenAndServe(ctx context.Context) error {
 			"addr", s.tlsAddr)
 
 		server := http.Server{
-			Addr:              s.addr,
+			Addr:              s.tlsAddr,
 			Handler:           loggingHandler,
 			ReadHeaderTimeout: 5 * time.Second,
 		}
