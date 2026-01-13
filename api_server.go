@@ -23,6 +23,14 @@ func APIServerCORSHosts(hosts ...string) APIServerOption {
 	}
 }
 
+func APIServerTLS(addr string, certFile string, keyFile string) APIServerOption {
+	return func(s *APIServer) {
+		s.tlsAddr = addr
+		s.certFile = certFile
+		s.keyFile = keyFile
+	}
+}
+
 func NewAPIServer(
 	logger *slog.Logger,
 	addr string, profileAddr string,
@@ -128,6 +136,9 @@ type APIServer struct {
 	logger      *slog.Logger
 	addr        string
 	profileAddr string
+	tlsAddr     string
+	certFile    string
+	keyFile     string
 	handler     *handlerWrapper
 
 	Mux    *http.ServeMux
@@ -201,12 +212,6 @@ func (s *APIServer) ListenAndServe(ctx context.Context) error {
 		return nil
 	}
 
-	server := http.Server{
-		Addr:              s.addr,
-		Handler:           loggingHandler,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
 	grp, gCtx := errgroup.WithContext(ctx)
 
 	grp.Go(func() error {
@@ -227,12 +232,46 @@ func (s *APIServer) ListenAndServe(ctx context.Context) error {
 		s.logger.Info("starting API server",
 			"addr", s.addr)
 
+		server := http.Server{
+			Addr:              s.addr,
+			Handler:           loggingHandler,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+
 		err := ListenAndServeContext(ctx, &server, 10*time.Second)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("API server error: %w", err)
 		}
 
 		s.logger.Info("stopped API server")
+
+		return nil
+	})
+
+	grp.Go(func() error {
+		if s.tlsAddr == "" || s.certFile == "" || s.keyFile == "" {
+			return nil
+		}
+
+		s.logger.Info("starting TLS API server",
+			"addr", s.tlsAddr)
+
+		server := http.Server{
+			Addr:              s.addr,
+			Handler:           loggingHandler,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+
+		err := ListenAndServeContext(
+			ctx, &server,
+			10*time.Second,
+			ListenAndServeTLS(s.certFile, s.keyFile),
+		)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("TLS API server error: %w", err)
+		}
+
+		s.logger.Info("stopped TLS API server")
 
 		return nil
 	})

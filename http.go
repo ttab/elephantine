@@ -87,6 +87,23 @@ func HTTPErrorFromResponse(res *http.Response) error {
 	return &e
 }
 
+type ListenAndServeOption func(s *http.Server, o *ListenAndServeOptions)
+
+type ListenAndServeOptions struct {
+	listenFn func() error
+}
+
+// ListenAndServeTLS configures the server to use TLS.
+func ListenAndServeTLS(certFile string, keyFile string) ListenAndServeOption {
+	return func(server *http.Server, o *ListenAndServeOptions) {
+		o.listenFn = func() error {
+			return server.ListenAndServeTLS(
+				certFile, keyFile,
+			)
+		}
+	}
+}
+
 // ListenAndServeContext will call ListenAndServe() for the provided server and
 // then Shutdown() if the context is cancelled.
 //
@@ -95,6 +112,7 @@ func HTTPErrorFromResponse(res *http.Response) error {
 func ListenAndServeContext(
 	ctx context.Context, server *http.Server,
 	shutdownTimeout time.Duration,
+	opts ...ListenAndServeOption,
 ) error {
 	closed := make(chan struct{})
 
@@ -113,7 +131,15 @@ func ListenAndServeContext(
 		}
 	}()
 
-	err := server.ListenAndServe()
+	o := ListenAndServeOptions{
+		listenFn: server.ListenAndServe,
+	}
+
+	for _, fn := range opts {
+		fn(server, &o)
+	}
+
+	err := o.listenFn()
 	if errors.Is(err, http.ErrServerClosed) {
 		// Listens and serve exits immediately when server.Shutdown() is
 		// called, wait for it to actually be closed, gracefully or
