@@ -9,16 +9,16 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/vault/api v1.22.0
 	github.com/hashicorp/vault/api/auth/kubernetes v0.10.0
-	github.com/jackc/pgx/v5 v5.7.6
+	github.com/jackc/pgx/v5 v5.8.0
 	github.com/jellydator/ttlcache/v3 v3.4.0
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/ryanuber/go-glob v1.0.0
 	github.com/twitchtv/twirp v8.1.3+incompatible
 	github.com/urfave/cli/v3 v3.6.1
-	golang.org/x/oauth2 v0.33.0
-	golang.org/x/sync v0.18.0
-	google.golang.org/protobuf v1.36.10
+	golang.org/x/oauth2 v0.34.0
+	golang.org/x/sync v0.19.0
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
