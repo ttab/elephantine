@@ -28,6 +28,7 @@ type JWTClaims struct {
 	AuthorizedParty string   `json:"azp"`
 	ClientID        string   `json:"client_id"`
 	Units           []string `json:"units,omitempty"`
+	Org             string   `json:"org"`
 }
 
 // HasScope returns true if the Scope claim contains the named scope.
