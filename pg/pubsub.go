@@ -303,6 +303,9 @@ func Publish(
 
 // Subscribe opens a connection to the database and subscribes to the provided
 // channels. Blocks until the context is cancelled.
+//
+// Deprecated: use NewSubscriber and Subscriber.Run instead, which adds
+// ping-based health checking to detect dead connections.
 func Subscribe(
 	ctx context.Context,
 	logger *slog.Logger,
