@@ -175,12 +175,3 @@ func TestSubscriberWithOptions(t *testing.T) {
 	}
 }
 
-func TestErrPingTimeoutSentinel(t *testing.T) {
-	// errPingTimeout is unexported, but we can verify it's used correctly
-	// by checking that the error message is present in a wrapped error.
-	// This test is mainly a compile-time check that the sentinel exists.
-	err := errors.New("listener ping timeout")
-	if err.Error() != "listener ping timeout" {
-		t.Fatal("unexpected error message")
-	}
-}
