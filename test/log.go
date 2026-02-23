@@ -3,13 +3,22 @@ package test
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 )
 
-type Logger interface {
+// TestingLogger is satisfied by *testing.T and *testing.B.
+type TestingLogger interface {
 	Log(args ...any)
+	Cleanup(fn func())
 }
 
-func NewLogHandler(t Logger, level slog.Level) slog.Handler {
+// Logger is the previous interface for NewLogHandler. Use TestingLogger
+// instead.
+//
+// Deprecated: use TestingLogger.
+type Logger = TestingLogger
+
+func NewLogHandler(t TestingLogger, level slog.Level) slog.Handler {
 	h := LogHandler{
 		t: t,
 	}
@@ -18,15 +27,24 @@ func NewLogHandler(t Logger, level slog.Level) slog.Handler {
 		Level: level,
 	})
 
+	t.Cleanup(func() {
+		h.done.Store(true)
+	})
+
 	return &h
 }
 
 type LogHandler struct {
-	t       Logger
+	t       TestingLogger
 	handler *slog.TextHandler
+	done    atomic.Bool
 }
 
 func (h *LogHandler) Handle(ctx context.Context, r slog.Record) error {
+	if h.done.Load() {
+		return nil
+	}
+
 	return h.handler.Handle(ctx, r) //nolint:wrapcheck
 }
 
@@ -39,10 +57,18 @@ func (h *LogHandler) WithGroup(name string) slog.Handler {
 }
 
 func (h *LogHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	if h.done.Load() {
+		return false
+	}
+
 	return h.handler.Enabled(ctx, level)
 }
 
 func (h *LogHandler) Write(data []byte) (int, error) {
+	if h.done.Load() {
+		return len(data), nil
+	}
+
 	h.t.Log(string(data))
 
 	return len(data), nil
