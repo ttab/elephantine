@@ -3,9 +3,11 @@ package elephantine
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -90,16 +92,41 @@ func HTTPErrorFromResponse(res *http.Response) error {
 type ListenAndServeOption func(s *http.Server, o *ListenAndServeOptions)
 
 type ListenAndServeOptions struct {
-	listenFn func() error
+	listenFn func(ctx context.Context) error
 }
 
-// ListenAndServeTLS configures the server to use TLS.
-func ListenAndServeTLS(certFile string, keyFile string) ListenAndServeOption {
+// ListenAndServeTLS configures the server to use TLS with automatic
+// certificate reloading. The certificate and key files are polled for changes,
+// and the TLS certificate is reloaded after a settle delay.
+func ListenAndServeTLS(
+	logger *slog.Logger, certFile string, keyFile string,
+	opts ...CertificateSourceOption,
+) ListenAndServeOption {
 	return func(server *http.Server, o *ListenAndServeOptions) {
-		o.listenFn = func() error {
-			return server.ListenAndServeTLS(
-				certFile, keyFile,
+		o.listenFn = func(ctx context.Context) error {
+			certSource, err := NewCertificateSource(
+				logger, certFile, keyFile, opts...,
 			)
+			if err != nil {
+				return fmt.Errorf(
+					"create certificate source: %w", err)
+			}
+
+			server.TLSConfig = &tls.Config{
+				GetCertificate: certSource.GetCertificate,
+			}
+
+			go func() {
+				runErr := certSource.Run(ctx)
+				if runErr != nil {
+					logger.Error(
+						"certificate source stopped",
+						"err", runErr,
+					)
+				}
+			}()
+
+			return server.ListenAndServeTLS("", "")
 		}
 	}
 }
@@ -132,14 +159,16 @@ func ListenAndServeContext(
 	}()
 
 	o := ListenAndServeOptions{
-		listenFn: server.ListenAndServe,
+		listenFn: func(_ context.Context) error {
+			return server.ListenAndServe()
+		},
 	}
 
 	for _, fn := range opts {
 		fn(server, &o)
 	}
 
-	err := o.listenFn()
+	err := o.listenFn(ctx)
 	if errors.Is(err, http.ErrServerClosed) {
 		// Listens and serve exits immediately when server.Shutdown() is
 		// called, wait for it to actually be closed, gracefully or

@@ -265,7 +265,7 @@ func (s *APIServer) ListenAndServe(ctx context.Context) error {
 		err := ListenAndServeContext(
 			ctx, &server,
 			10*time.Second,
-			ListenAndServeTLS(s.certFile, s.keyFile),
+			ListenAndServeTLS(s.logger, s.certFile, s.keyFile),
 		)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("TLS API server error: %w", err)
