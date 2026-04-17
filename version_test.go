@@ -63,19 +63,21 @@ func TestAPIServerVersionEndpoint(t *testing.T) {
 		t.Fatal("expected non-empty application name")
 	}
 
-	// Default modules are always reported. elephantine is the test's own
-	// module so its entry reflects Main.Version (via APIServerVersion here).
+	// elephantine is the test's own module, so its entry is reported via
+	// Main.Version (overridden here by APIServerVersion).
 	test.Equal(t, "v0.0.0-test",
 		info.Modules["github.com/ttab/elephantine"],
 		"elephantine module version tracks the application version")
 
+	// Under `go test` debug.BuildInfo.Deps is empty, so modules that aren't
+	// part of the build are skipped rather than reported as "unknown".
 	for _, m := range []string{
 		"github.com/ttab/elephant-api",
 		"github.com/ttab/elephant-tt-api",
 		"github.com/prometheus/client_golang",
 	} {
-		if _, ok := info.Modules[m]; !ok {
-			t.Errorf("expected module %q in response", m)
+		if v, ok := info.Modules[m]; ok {
+			t.Errorf("module %q unexpectedly present: %q", m, v)
 		}
 	}
 }

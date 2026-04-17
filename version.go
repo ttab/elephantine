@@ -22,12 +22,9 @@ type ApplicationInfo struct {
 	VCSModified bool   `json:"vcs_modified,omitempty"`
 }
 
-const (
-	unknownVersion = "unknown"
-	// devVersion is reported when neither the application nor the Go
-	// toolchain has stamped a real version into the binary.
-	devVersion = "v0.0.0-dev"
-)
+// devVersion is reported when neither the application nor the Go toolchain
+// has stamped a real version into the binary.
+const devVersion = "v0.0.0-dev"
 
 // defaultVersionModules is the baseline set of modules whose versions are
 // reported by /version. APIServerModules appends to this list.
@@ -45,14 +42,6 @@ func buildBuildInfo(appVersion string, modules []string) BuildInfo {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		out.Application.Version = resolveAppVersion(appVersion, "")
-
-		for _, m := range modules {
-			if _, exists := out.Modules[m]; exists {
-				continue
-			}
-
-			out.Modules[m] = unknownVersion
-		}
 
 		return out
 	}
@@ -89,8 +78,8 @@ func buildBuildInfo(appVersion string, modules []string) BuildInfo {
 
 		v, ok := depVersions[m]
 		if !ok {
-			out.Modules[m] = unknownVersion
-
+			// Module isn't part of this build; skip it rather than
+			// reporting a fake "unknown" version.
 			continue
 		}
 
