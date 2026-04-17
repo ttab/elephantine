@@ -106,7 +106,7 @@ func LoggingHooks(
 			level := slog.LevelWarn
 
 			switch {
-			case status == 400:
+			case status == 400 || status == 404:
 				level = slog.LevelInfo
 			case status >= 500:
 				level = slog.LevelError
