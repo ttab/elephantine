@@ -96,6 +96,7 @@ func (s *HealthServer) setUpMux() *http.ServeMux {
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	mux.Handle("/debug/vars", expvar.Handler())
+	mux.Handle("/debug/bom", http.HandlerFunc(bomHandler))
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.Handle("/health/ready", http.HandlerFunc(s.readyHandler))
 

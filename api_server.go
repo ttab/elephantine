@@ -31,6 +31,25 @@ func APIServerTLS(addr string, certFile string, keyFile string) APIServerOption 
 	}
 }
 
+// APIServerVersion sets the application version string reported by the
+// /version endpoint. If not provided, the version falls back to
+// debug.BuildInfo.Main.Version (which is "(devel)" for plain `go build`).
+func APIServerVersion(version string) APIServerOption {
+	return func(s *APIServer) {
+		s.appVersion = version
+	}
+}
+
+// APIServerModules adds module paths to the /version endpoint's module list.
+// The defaults (github.com/ttab/elephantine, github.com/ttab/elephant-api,
+// github.com/ttab/elephant-tt-api) are always included; modules passed here
+// are appended.
+func APIServerModules(modules ...string) APIServerOption {
+	return func(s *APIServer) {
+		s.modules = append(s.modules, modules...)
+	}
+}
+
 func NewAPIServer(
 	logger *slog.Logger,
 	addr string, profileAddr string,
@@ -124,6 +143,11 @@ func newAPIServer(
 		_, _ = fmt.Fprintln(w, "I AM ALIVE!")
 	}))
 
+	s.Mux.Handle("GET /version", versionHandler(buildBuildInfo(
+		s.appVersion,
+		append(append([]string{}, defaultVersionModules...), s.modules...),
+	)))
+
 	s.Health.AddReadyFunction("api_liveness",
 		LivenessReadyCheck(s.AliveEndpoint()))
 
@@ -140,6 +164,9 @@ type APIServer struct {
 	certFile    string
 	keyFile     string
 	handler     *handlerWrapper
+
+	appVersion string
+	modules    []string
 
 	Mux    *http.ServeMux
 	Health *HealthServer
