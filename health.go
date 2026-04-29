@@ -65,7 +65,10 @@ func WithHealthServerRegisterer(reg prometheus.Registerer) HealthServerOption {
 }
 
 // NewHealthServer creates a new health server that will listen to the provided
-// address.
+// address. Pass an empty addr to construct a no-op server: the readiness
+// machinery still works (useful for tests and for processes that share a
+// health endpoint with another listener), but ListenAndServe does not bind
+// any socket.
 func NewHealthServer(
 	logger *slog.Logger, addr string, opts ...HealthServerOption,
 ) *HealthServer {
@@ -73,10 +76,12 @@ func NewHealthServer(
 		registerer: prometheus.DefaultRegisterer,
 	}, opts)
 
-	s.server = &http.Server{
-		Addr:              addr,
-		Handler:           s.setUpMux(),
-		ReadHeaderTimeout: 1 * time.Second,
+	if addr != "" {
+		s.server = &http.Server{
+			Addr:              addr,
+			Handler:           s.setUpMux(),
+			ReadHeaderTimeout: 1 * time.Second,
+		}
 	}
 
 	return s
@@ -139,8 +144,10 @@ func (s *HealthServer) Addr() string {
 	switch {
 	case s.testServer != nil:
 		addr = s.testServer.Listener.Addr().String()
-	default:
+	case s.server != nil:
 		addr = s.server.Addr
+	default:
+		return ""
 	}
 
 	if strings.HasPrefix(addr, ":") {
