@@ -3,6 +3,7 @@ package elephantine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"expvar"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -38,33 +40,100 @@ type HealthServer struct {
 	logger         *slog.Logger
 	testServer     *httptest.Server
 	server         *http.Server
-	readyFunctions map[string]ReadyFunc
+	readyFunctions map[string]readyEntry
+	upGauge        *prometheus.GaugeVec
+}
+
+type readyEntry struct {
+	fn       ReadyFunc
+	optional bool
+}
+
+type healthServerOptions struct {
+	registerer prometheus.Registerer
+}
+
+// HealthServerOption configures a HealthServer.
+type HealthServerOption func(*healthServerOptions)
+
+// WithHealthServerRegisterer sets the prometheus registerer used for the
+// readiness check gauge. Pass nil to disable metric registration.
+func WithHealthServerRegisterer(reg prometheus.Registerer) HealthServerOption {
+	return func(o *healthServerOptions) {
+		o.registerer = reg
+	}
 }
 
 // NewHealthServer creates a new health server that will listen to the provided
-// address.
-func NewHealthServer(logger *slog.Logger, addr string) *HealthServer {
-	s := HealthServer{
-		logger:         logger,
-		readyFunctions: make(map[string]ReadyFunc),
+// address. Pass an empty addr to construct a no-op server: the readiness
+// machinery still works (useful for tests and for processes that share a
+// health endpoint with another listener), but ListenAndServe does not bind
+// any socket.
+func NewHealthServer(
+	logger *slog.Logger, addr string, opts ...HealthServerOption,
+) *HealthServer {
+	s := newHealthServer(logger, healthServerOptions{
+		registerer: prometheus.DefaultRegisterer,
+	}, opts)
+
+	if addr != "" {
+		s.server = &http.Server{
+			Addr:              addr,
+			Handler:           s.setUpMux(),
+			ReadHeaderTimeout: 1 * time.Second,
+		}
 	}
 
-	s.server = &http.Server{
-		Addr:              addr,
-		Handler:           s.setUpMux(),
-		ReadHeaderTimeout: 1 * time.Second,
-	}
-
-	return &s
+	return s
 }
 
-func NewTestHealthServer(logger *slog.Logger) *HealthServer {
-	s := HealthServer{
-		logger:         logger,
-		readyFunctions: make(map[string]ReadyFunc),
-	}
+func NewTestHealthServer(
+	logger *slog.Logger, opts ...HealthServerOption,
+) *HealthServer {
+	s := newHealthServer(logger, healthServerOptions{}, opts)
 
 	s.testServer = httptest.NewServer(s.setUpMux())
+
+	return s
+}
+
+func newHealthServer(
+	logger *slog.Logger,
+	defaults healthServerOptions,
+	opts []HealthServerOption,
+) *HealthServer {
+	o := defaults
+
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	s := HealthServer{
+		logger:         logger,
+		readyFunctions: make(map[string]readyEntry),
+		upGauge: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "health_check_up",
+				Help: "1 if the named readiness check is passing, 0 otherwise.",
+			},
+			[]string{"name"},
+		),
+	}
+
+	if o.registerer != nil {
+		err := o.registerer.Register(s.upGauge)
+
+		var are prometheus.AlreadyRegisteredError
+		switch {
+		case errors.As(err, &are):
+			if existing, ok := are.ExistingCollector.(*prometheus.GaugeVec); ok {
+				s.upGauge = existing
+			}
+		case err != nil:
+			logger.Warn("register health check gauge",
+				LogKeyError, err)
+		}
+	}
 
 	return &s
 }
@@ -75,8 +144,10 @@ func (s *HealthServer) Addr() string {
 	switch {
 	case s.testServer != nil:
 		addr = s.testServer.Listener.Addr().String()
-	default:
+	case s.server != nil:
 		addr = s.server.Addr
+	default:
+		return ""
 	}
 
 	if strings.HasPrefix(addr, ":") {
@@ -104,8 +175,9 @@ func (s *HealthServer) setUpMux() *http.ServeMux {
 }
 
 type readyResult struct {
-	Ok    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
+	Ok       bool   `json:"ok"`
+	Optional bool   `json:"optional,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 func (s *HealthServer) readyHandler(
@@ -115,25 +187,33 @@ func (s *HealthServer) readyHandler(
 
 	result := make(map[string]readyResult)
 
-	for name, fn := range s.readyFunctions {
-		err := fn(req.Context())
+	for name, entry := range s.readyFunctions {
+		err := entry.fn(req.Context())
 		if err != nil {
-			failed = true
+			if !entry.optional {
+				failed = true
+			}
 
 			s.logger.Error("healthcheck failed",
 				LogKeyName, name,
 				LogKeyError, err,
+				"optional", entry.optional,
 			)
 
+			s.upGauge.WithLabelValues(name).Set(0)
+
 			result[name] = readyResult{
-				Ok:    false,
-				Error: err.Error(),
+				Ok:       false,
+				Optional: entry.optional,
+				Error:    err.Error(),
 			}
 
 			continue
 		}
 
-		result[name] = readyResult{Ok: true}
+		s.upGauge.WithLabelValues(name).Set(1)
+
+		result[name] = readyResult{Ok: true, Optional: entry.optional}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -156,9 +236,20 @@ func (s *HealthServer) readyHandler(
 type ReadyFunc func(ctx context.Context) error
 
 // AddReadyFunction adds a function that will be called when a client requests
-// "/health/ready".
+// "/health/ready". A non-nil error from the function will cause "/health/ready"
+// to respond with 500.
 func (s *HealthServer) AddReadyFunction(name string, fn ReadyFunc) {
-	s.readyFunctions[name] = fn
+	s.readyFunctions[name] = readyEntry{fn: fn}
+	s.upGauge.WithLabelValues(name).Set(0)
+}
+
+// AddOptionalReadyFunction adds a function that will be called when a client
+// requests "/health/ready". A non-nil error from the function will be reported
+// in the response body with "ok": false but will not cause "/health/ready" to
+// respond with 500.
+func (s *HealthServer) AddOptionalReadyFunction(name string, fn ReadyFunc) {
+	s.readyFunctions[name] = readyEntry{fn: fn, optional: true}
+	s.upGauge.WithLabelValues(name).Set(0)
 }
 
 // Close stops the health server.

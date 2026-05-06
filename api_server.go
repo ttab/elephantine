@@ -241,19 +241,21 @@ func (s *APIServer) ListenAndServe(ctx context.Context) error {
 
 	grp, gCtx := errgroup.WithContext(ctx)
 
-	grp.Go(func() error {
-		s.logger.Info("starting health server",
-			"addr", s.profileAddr)
+	if s.profileAddr != "" {
+		grp.Go(func() error {
+			s.logger.Info("starting health server",
+				"addr", s.profileAddr)
 
-		err := s.Health.ListenAndServe(gCtx)
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("health server error: %w", err)
-		}
+			err := s.Health.ListenAndServe(gCtx)
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("health server error: %w", err)
+			}
 
-		s.logger.Info("stopped health server")
+			s.logger.Info("stopped health server")
 
-		return nil
-	})
+			return nil
+		})
+	}
 
 	grp.Go(func() error {
 		s.logger.Info("starting API server",
