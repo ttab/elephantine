@@ -31,7 +31,7 @@ func CORSMiddleware(opts CORSOptions, handler http.Handler) http.Handler {
 
 		if r.Method == http.MethodOptions && accessMethod != "" {
 
-			if !validOrigin(origin, opts) {
+			if !opts.AllowOrigin(origin) {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 
 				return
@@ -51,7 +51,7 @@ func CORSMiddleware(opts CORSOptions, handler http.Handler) http.Handler {
 			return
 		}
 
-		if origin != "" && validOrigin(origin, opts) {
+		if origin != "" && opts.AllowOrigin(origin) {
 			header.Set("Access-Control-Allow-Origin", origin)
 			header.Set("Vary", "Origin")
 		}
@@ -60,7 +60,20 @@ func CORSMiddleware(opts CORSOptions, handler http.Handler) http.Handler {
 	})
 }
 
-func validOrigin(origin string, opts CORSOptions) bool {
+// AllowOrigin reports whether the given Origin header value is
+// accepted under these options. Exposed so that non-CORS code paths
+// (notably WebSocket upgrades) can validate Origin with the same
+// rules as the CORS middleware:
+//
+//   - Origin is parsed and only its hostname is considered (port
+//     stripped).
+//   - The scheme must be https unless AllowInsecure is set, or the
+//     hostname is "localhost" and AllowInsecureLocalhost is set.
+//   - Hosts entries match the hostname exactly or as a parent
+//     domain (entry "tt.se" matches "tt.se" and "foo.tt.se").
+//   - HostPatterns entries are go-glob patterns matched against the
+//     hostname.
+func (opts CORSOptions) AllowOrigin(origin string) bool {
 	oURL, err := url.Parse(origin)
 	if err != nil {
 		return false
