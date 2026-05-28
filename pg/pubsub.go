@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/ttab/elephantine"
 	"golang.org/x/sync/errgroup"
 )
@@ -21,7 +22,10 @@ import (
 // received notifications to verify that the LISTEN connection is still alive.
 const PingChannel = "listener_ping"
 
-var errPingTimeout = errors.New("listener ping timeout")
+var (
+	errPingTimeout = errors.New("listener ping timeout")
+	errBounce      = errors.New("listener bounce requested")
+)
 
 // SubscriberOption configures a Subscriber.
 type SubscriberOption func(*Subscriber)
@@ -77,6 +81,12 @@ type Subscriber struct {
 	pingGrace    time.Duration
 	channels     []ChannelSubscription
 	onReconnect  func(ctx context.Context) error
+	// bounceCh receives requests to tear down the current LISTEN connection
+	// and reconnect. Buffered to depth 1 so multiple concurrent Bounce calls
+	// coalesce into one pending signal; runListenerWithPing drains it on
+	// entry so signals queued during a previous outage don't immediately
+	// trip the fresh connection.
+	bounceCh chan struct{}
 }
 
 // NewSubscriber creates a new Subscriber that listens on the given channels. By
@@ -94,6 +104,7 @@ func NewSubscriber(
 		pingInterval: 5 * time.Minute,
 		pingGrace:    7 * time.Minute,
 		channels:     channels,
+		bounceCh:     make(chan struct{}, 1),
 	}
 
 	for _, opt := range opts {
@@ -101,6 +112,24 @@ func NewSubscriber(
 	}
 
 	return s
+}
+
+// Bounce signals the listen loop to tear down the current PostgreSQL LISTEN
+// connection and reconnect on the next iteration. The call is non-blocking;
+// concurrent Bounce invocations coalesce into a single pending signal, and the
+// listen loop drains any pending signal at the start of each connection so a
+// signal queued during a previous outage does not immediately tear down a
+// fresh connection.
+//
+// Bounce is intended for forcing a reconnect when an external signal (e.g. a
+// RecoveryTracker noticing that polling is keeping a consumer afloat without
+// notifications) suggests the LISTEN connection is silently broken even
+// though the ping path appears healthy.
+func (s *Subscriber) Bounce() {
+	select {
+	case s.bounceCh <- struct{}{}:
+	default:
+	}
 }
 
 // SendListenerPing sends a ping notification on the PingChannel. This can be
@@ -174,6 +203,10 @@ func (s *Subscriber) runListenLoop(ctx context.Context) error {
 			s.logger.WarnContext(ctx,
 				"listener ping timeout, reconnecting",
 			)
+		case errors.Is(err, errBounce):
+			s.logger.WarnContext(ctx,
+				"listener bounce requested, reconnecting",
+			)
 		case err != nil:
 			return err
 		}
@@ -187,6 +220,16 @@ func (s *Subscriber) runListenLoop(ctx context.Context) error {
 }
 
 func (s *Subscriber) runListenerWithPing(ctx context.Context) (outErr error) {
+	// Drain any stale bounce signal queued during a previous outage so that
+	// the fresh connection we're about to set up is not immediately torn
+	// down. With multiple consumers, several Bounce calls can race during a
+	// single outage; the buffered channel coalesces them and this drain
+	// discards the leftover.
+	select {
+	case <-s.bounceCh:
+	default:
+	}
+
 	if s.onReconnect != nil {
 		err := s.onReconnect(ctx)
 		if err != nil {
@@ -233,18 +276,41 @@ func (s *Subscriber) runListenerWithPing(ctx context.Context) (outErr error) {
 		return fmt.Errorf("start listening to ping channel: %w", err)
 	}
 
+	// bounceCtx is a child of ctx that we cancel as soon as a bounce signal
+	// arrives. The waiter goroutine below watches bounceCh for the lifetime
+	// of this listen attempt; it exits when bounceCtx is done (either
+	// because we bounced, the parent was cancelled, or this function
+	// returned).
+	bounceCtx, cancelBounce := context.WithCancel(ctx)
+	defer cancelBounce()
+
+	go func() {
+		select {
+		case <-s.bounceCh:
+			cancelBounce()
+		case <-bounceCtx.Done():
+		}
+	}()
+
 	lastPing := time.Now()
 
 	for {
 		deadline := lastPing.Add(s.pingGrace)
 
-		waitCtx, waitCancel := context.WithDeadline(ctx, deadline)
+		waitCtx, waitCancel := context.WithDeadline(bounceCtx, deadline)
 
 		notification, err := pConn.WaitForNotification(waitCtx)
 
 		waitCancel()
 
 		if err != nil {
+			// A bounce signal cancels bounceCtx while the parent ctx
+			// is still healthy; surface it so the outer loop can
+			// reconnect.
+			if bounceCtx.Err() != nil && ctx.Err() == nil {
+				return errBounce
+			}
+
 			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 				return errPingTimeout
 			}
@@ -446,6 +512,10 @@ type FanOut[T any] struct {
 	overflowPolicy OverflowPolicy
 	m              sync.RWMutex
 	listeners      map[chan T]func(v T) bool
+	// recovery is non-nil once EnableRecovery has been called. Reads and
+	// writes are guarded by m so EnableRecovery is safe to call after
+	// listeners have started, though that is rarely useful.
+	recovery *recoveryTracker
 }
 
 func NewFanOut[T any](channel string, opts ...FanOutOption) *FanOut[T] {
@@ -460,6 +530,88 @@ func NewFanOut[T any](channel string, opts ...FanOutOption) *FanOut[T] {
 		overflowPolicy: cfg.overflowPolicy,
 		listeners:      make(map[chan T]func(v T) bool),
 	}
+}
+
+// EnableRecovery wires this FanOut into the recovery pattern documented in
+// elephantine's docs/fanout-recovery.md: callers report fallback-poll
+// findings via Polled, the FanOut resets the streak whenever it dispatches a
+// wire-side notification (NotifyWithPayload), and bounce is invoked once the
+// poll-saved streak crosses the configured threshold (default 5). Pass
+// Subscriber.Bounce for bounce so the recovery loop closes back onto the
+// listener.
+//
+// EnableRecovery registers a per-channel poll-saved counter and streak gauge
+// through metrics, using the channel name (sanitized) as the metric name
+// suffix. Registration errors are returned and also recorded on the metrics
+// helper.
+//
+// Calling EnableRecovery more than once replaces the previous wiring; that
+// is rarely useful but legal.
+func (f *FanOut[T]) EnableRecovery(
+	metrics *elephantine.MetricsHelper,
+	bounce func(),
+	opts ...FanOutRecoveryOption,
+) error {
+	cfg := fanOutRecoveryConfig{threshold: defaultBounceThreshold}
+
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	suffix := sanitizeMetricSegment(f.channel)
+
+	var (
+		pollCounter prometheus.Counter
+		streakGauge prometheus.Gauge
+	)
+
+	metrics.Counter(&pollCounter, prometheus.CounterOpts{
+		Name: "pg_fanout_" + suffix + "_poll_saved_total",
+		Help: "Items the fallback poll for FanOut channel " + f.channel +
+			" relayed before a notification arrived.",
+	})
+
+	metrics.Gauge(&streakGauge, prometheus.GaugeOpts{
+		Name: "pg_fanout_" + suffix + "_poll_saved_streak",
+		Help: "Consecutive non-empty fallback-poll drains for FanOut " +
+			"channel " + f.channel + " without an intervening " +
+			"notification. Counts calls, not items, so a busy " +
+			"publisher cannot trip the bounce on a single mistimed " +
+			"poll.",
+	})
+
+	err := metrics.Err()
+	if err != nil {
+		return fmt.Errorf("register FanOut recovery metrics: %w", err)
+	}
+
+	tracker := newRecoveryTracker(bounce, cfg.threshold, pollCounter, streakGauge)
+
+	f.m.Lock()
+	f.recovery = tracker
+	f.m.Unlock()
+
+	return nil
+}
+
+// Polled reports that a fallback-poll iteration discovered `found` items of
+// work. With recovery enabled, a call with found > 0 advances the consecutive
+// non-empty-poll streak by one (regardless of how many items were drained,
+// so a backlog-clearing poll does not trip the threshold by itself) and adds
+// `found` to the per-item counter. Once the streak crosses the configured
+// threshold the bounce callback fires and the streak resets. With recovery
+// not enabled, Polled is a no-op; consumers may call it unconditionally. A
+// call with found <= 0 is always a no-op.
+func (f *FanOut[T]) Polled(found int) {
+	f.m.RLock()
+	rec := f.recovery
+	f.m.RUnlock()
+
+	if rec == nil {
+		return
+	}
+
+	rec.polled(found)
 }
 
 // ListenAll listens for notifications until the context is cancelled.
@@ -488,7 +640,10 @@ func (f *FanOut[T]) ChannelName() string {
 	return f.channel
 }
 
-// Implements ChannelSubscription.
+// Implements ChannelSubscription. The wire-side delivery path: invoked by the
+// Subscriber when a Postgres NOTIFY arrives on this channel. Successful
+// dispatch resets the recovery streak (if enabled), signalling that the
+// LISTEN connection is healthy.
 func (f *FanOut[T]) NotifyWithPayload(data []byte) error {
 	var e T
 
@@ -500,6 +655,14 @@ func (f *FanOut[T]) NotifyWithPayload(data []byte) error {
 	err = f.Notify(e)
 	if err != nil {
 		return fmt.Errorf("notify listeners: %w", err)
+	}
+
+	f.m.RLock()
+	rec := f.recovery
+	f.m.RUnlock()
+
+	if rec != nil {
+		rec.notified()
 	}
 
 	return nil
