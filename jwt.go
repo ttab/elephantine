@@ -276,17 +276,29 @@ func GetAuthInfo(ctx context.Context) (*AuthInfo, bool) {
 	return info, ok && info != nil
 }
 
+// RequireAnyScope checks that the authenticated caller carries one of
+// the named scopes. On success it returns the AuthInfo from the
+// context; on failure it returns a twirp error suitable for direct
+// return from an RPC handler. An anonymous caller (no AuthInfo, or
+// an empty subject) yields Unauthenticated; an authenticated caller
+// without any of the required scopes yields PermissionDenied with
+// the accepted scope list in the error meta under
+// "required_any_of_scopes".
+//
+// Scopes are OR-ed: passing more than one means the caller may hold
+// any of them.
 func RequireAnyScope(ctx context.Context, scopes ...string) (*AuthInfo, error) {
 	auth, ok := GetAuthInfo(ctx)
-	if !ok {
+	if !ok || auth.Claims.Subject == "" {
 		return nil, twirp.Unauthenticated.Error(
 			"no anonymous access allowed")
 	}
 
 	if !auth.Claims.HasAnyScope(scopes...) {
-		return nil, twirp.PermissionDenied.Errorf(
-			"one of the the scopes %s is required",
-			strings.Join(scopes, ", "))
+		err := twirp.PermissionDenied.Error("missing required scope")
+		err = err.WithMeta("required_any_of_scopes", strings.Join(scopes, " "))
+
+		return nil, err
 	}
 
 	return auth, nil
