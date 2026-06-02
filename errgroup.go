@@ -12,12 +12,19 @@ import (
 type BackoffFunction func(retry int) time.Duration
 
 func NewErrGroup(ctx context.Context, logger *slog.Logger) *ErrGroup {
+	// Derive our own cancellation before handing the context to the
+	// errgroup, so that the group context tasks observe is cancelled both
+	// by the errgroup (on a task error) and by us (when a Required() task
+	// returns, even without an error).
+	ctx, cancel := context.WithCancel(ctx)
+
 	grp, gCtx := errgroup.WithContext(ctx)
 
 	eg := ErrGroup{
 		logger: logger,
 		grp:    grp,
 		gCtx:   gCtx,
+		cancel: cancel,
 	}
 
 	return &eg
@@ -29,6 +36,7 @@ type ErrGroup struct {
 	logger *slog.Logger
 	grp    *errgroup.Group
 	gCtx   context.Context
+	cancel context.CancelFunc
 }
 
 func (eg *ErrGroup) Go(task string, fn func(ctx context.Context) error) {
@@ -38,6 +46,38 @@ func (eg *ErrGroup) Go(task string, fn func(ctx context.Context) error) {
 
 		defer eg.logger.Info("stopped task",
 			LogKeyName, task)
+
+		err := CallWithRecover(eg.gCtx, fn)
+		if err != nil {
+			return fmt.Errorf("%s: %w", task, err)
+		}
+
+		return nil
+	})
+}
+
+// Required runs a task that the rest of the group depends on. Unlike Go, the
+// group context is cancelled as soon as the task returns — even if it returns
+// a nil error — which stops the sibling tasks and unblocks Wait.
+//
+// Use it for subsystems that must run for the entire lifetime of the service:
+// if one exits for any reason we want the whole service to stop and be
+// restarted, rather than linger with only a subset of its subsystems running.
+// A nil return still yields a nil Wait result unless a sibling reports an
+// error, so a clean shutdown stays clean.
+func (eg *ErrGroup) Required(task string, fn func(ctx context.Context) error) {
+	eg.grp.Go(func() error {
+		eg.logger.Info("starting task",
+			LogKeyName, task)
+
+		defer eg.logger.Info("stopped task",
+			LogKeyName, task)
+
+		// The group can't continue without this task, so cancel the
+		// group context when it returns regardless of whether it
+		// failed. This stops the sibling tasks instead of leaving
+		// them running without a subsystem they depend on.
+		defer eg.cancel()
 
 		err := CallWithRecover(eg.gCtx, fn)
 		if err != nil {
@@ -111,6 +151,10 @@ func (eg *ErrGroup) GoWithRetries(
 }
 
 func (eg *ErrGroup) Wait() error {
+	// Release the context we derived in NewErrGroup once every task has
+	// returned.
+	defer eg.cancel()
+
 	return eg.grp.Wait()
 }
 
