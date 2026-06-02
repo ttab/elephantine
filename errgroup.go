@@ -2,12 +2,21 @@ package elephantine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 )
+
+// ErrTaskDisabled can be returned by a Required task to signal that it is
+// disabled (typically by configuration) and should not run. The group treats
+// it as if the task was never registered: it does not cancel the group, and
+// Wait does not report it as an error. This lets callers register a task
+// unconditionally and opt out from inside it, instead of wrapping the
+// registration in a conditional.
+var ErrTaskDisabled = errors.New("task disabled")
 
 type BackoffFunction func(retry int) time.Duration
 
@@ -65,6 +74,10 @@ func (eg *ErrGroup) Go(task string, fn func(ctx context.Context) error) {
 // restarted, rather than linger with only a subset of its subsystems running.
 // A nil return still yields a nil Wait result unless a sibling reports an
 // error, so a clean shutdown stays clean.
+//
+// A task that is disabled by configuration can return ErrTaskDisabled to opt
+// out: the group is then left untouched, as if the task had never been
+// registered.
 func (eg *ErrGroup) Required(task string, fn func(ctx context.Context) error) {
 	eg.grp.Go(func() error {
 		eg.logger.Info("starting task",
@@ -73,13 +86,23 @@ func (eg *ErrGroup) Required(task string, fn func(ctx context.Context) error) {
 		defer eg.logger.Info("stopped task",
 			LogKeyName, task)
 
-		// The group can't continue without this task, so cancel the
-		// group context when it returns regardless of whether it
-		// failed. This stops the sibling tasks instead of leaving
-		// them running without a subsystem they depend on.
-		defer eg.cancel()
-
 		err := CallWithRecover(eg.gCtx, fn)
+
+		// A disabled task opted out of running, so leave the rest of
+		// the group alone — it's as if the task was never registered.
+		if errors.Is(err, ErrTaskDisabled) {
+			eg.logger.Info("task disabled",
+				LogKeyName, task)
+
+			return nil
+		}
+
+		// The group can't continue without this task, so cancel the
+		// group context now that it has returned, regardless of
+		// whether it failed. This stops the sibling tasks instead of
+		// leaving them running without a subsystem they depend on.
+		eg.cancel()
+
 		if err != nil {
 			return fmt.Errorf("%s: %w", task, err)
 		}
