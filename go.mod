@@ -1,6 +1,6 @@
 module github.com/ttab/elephantine
 
-go 1.25.7
+go 1.26.5
 
 require (
 	github.com/MicahParks/keyfunc/v3 v3.8.0
@@ -9,15 +9,15 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/hashicorp/vault/api/auth/kubernetes v0.12.0
-	github.com/jackc/pgx/v5 v5.9.2
-	github.com/jellydator/ttlcache/v3 v3.4.0
+	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jellydator/ttlcache/v3 v3.4.1
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/ryanuber/go-glob v1.0.0
 	github.com/twitchtv/twirp v8.1.3+incompatible
-	github.com/urfave/cli/v3 v3.9.0
+	github.com/urfave/cli/v3 v3.10.1
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sync v0.20.0
+	golang.org/x/sync v0.22.0
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -44,10 +44,10 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.68.0 // indirect
-	github.com/prometheus/procfs v0.20.1 // indirect
-	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	github.com/prometheus/common v0.70.0 // indirect
+	github.com/prometheus/procfs v0.21.1 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
