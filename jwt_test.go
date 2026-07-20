@@ -103,6 +103,7 @@ func TestAuthInfoParsesScopes(t *testing.T) {
 			Issuer: testIssuer,
 		},
 		Name:  "jolifanto",
+		Email: "jolifanto@example.com",
 		Scope: "doc_read doc_write",
 	})
 
@@ -113,6 +114,7 @@ func TestAuthInfoParsesScopes(t *testing.T) {
 	test.Mustf(t, err, "parse token")
 
 	test.Equalf(t, "doc_read doc_write", info.Claims.Scope, "preserves scope")
+	test.Equalf(t, "jolifanto@example.com", info.Claims.Email, "preserves email")
 }
 
 func TestAuthInfoStripsScopePrefix(t *testing.T) {

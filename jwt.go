@@ -24,6 +24,7 @@ type JWTClaims struct {
 	OriginalSub string `json:"-"`
 
 	Name            string   `json:"sub_name"`
+	Email           string   `json:"email"`
 	Scope           string   `json:"scope"`
 	AuthorizedParty string   `json:"azp"`
 	ClientID        string   `json:"client_id"`
