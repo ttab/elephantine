@@ -33,7 +33,6 @@ func CORSMiddleware(opts CORSOptions, handler http.Handler) http.Handler {
 		header := w.Header()
 
 		if r.Method == http.MethodOptions && accessMethod != "" {
-
 			if !opts.AllowOrigin(origin) {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 

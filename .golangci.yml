@@ -1,0 +1,86 @@
+version: "2"
+linters:
+  enable:
+    - bodyclose
+    - copyloopvar
+    - dogsled
+    - dupl
+    - errorlint
+    - exhaustive
+    - forbidigo
+    - gochecknoinits
+    - goconst
+    - gocritic
+    - godot
+    - godox
+    - gomoddirectives
+    - gomodguard_v2
+    - goprintffuncname
+    - gosec
+    - importas
+    - lll
+    - makezero
+    - misspell
+    - modernize
+    - nakedret
+    - nestif
+    - nilnil
+    - nlreturn
+    - nolintlint
+    - predeclared
+    - promlinter
+    - revive
+    - staticcheck
+    - testpackage
+    - thelper
+    - unconvert
+    - unparam
+    - usetesting
+    - whitespace
+    - wrapcheck
+    - wsl_v5
+  settings:
+    exhaustive:
+      # A default case is enough to consider a type switch exhaustive; we
+      # don't want to enumerate every reflect.Kind just to satisfy the linter.
+      default-signifies-exhaustive: true
+    godox:
+      keywords:
+        - FIXME
+        - BUG
+    nestif:
+      min-complexity: 6
+    wrapcheck:
+      extra-ignore-sigs:
+        - elephantine.InvalidArgumentf(
+        - (context.Context).Err(
+        - github.com/ttab/elephantine/pg.WithTX(
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters: [gosec]
+        path: _test\.go$
+      # Struct tags (e.g. the OpenID Connect discovery document) can push a
+      # field declaration past the line limit with no way to wrap it.
+      - linters: [lll]
+        source: '`json:'
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gci
+    - gofumpt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

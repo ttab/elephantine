@@ -121,6 +121,7 @@ func PUUID(u *uuid.UUID) pgtype.UUID {
 	if u == nil {
 		return pgtype.UUID{}
 	}
+
 	return pgtype.UUID{
 		Bytes: *u,
 		Valid: true,

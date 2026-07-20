@@ -428,15 +428,17 @@ func (so *ServiceOptions) SetAuthInfoValidation(
 			}
 
 			auth, err := parser.AuthInfoFromHeader(headers.Get("Authorization"))
-			if errors.Is(err, ErrNoAuthorization) {
+
+			switch {
+			case errors.Is(err, ErrNoAuthorization):
 				if requireAuth {
 					return ctx, twirp.Unauthenticated.Error(
 						"authentication required")
 				}
-			} else if err != nil {
+			case err != nil:
 				return ctx, twirp.PermissionDenied.Errorf(
 					"invalid authorization: %v", err)
-			} else if auth == nil {
+			case auth == nil:
 				return ctx, twirp.InternalError(
 					"invalid auth info parser response")
 			}

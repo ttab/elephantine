@@ -89,8 +89,10 @@ func (cs *CertificateSource) Run(ctx context.Context) error {
 	ticker := time.NewTicker(cs.pollInterval)
 	defer ticker.Stop()
 
-	var settleTimer *time.Timer
-	var settleCh <-chan time.Time
+	var (
+		settleTimer *time.Timer
+		settleCh    <-chan time.Time
+	)
 
 	// Track the last observed mod times separately from the loaded mod
 	// times. This avoids resetting the settle timer on every poll tick when

@@ -2,6 +2,7 @@ package elephantine
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -196,7 +197,12 @@ func (h *contextHandler) Handle(ctx context.Context, r slog.Record) error {
 		r.Add(k, v)
 	}
 
-	return h.h.Handle(ctx, r)
+	err := h.h.Handle(ctx, r)
+	if err != nil {
+		return fmt.Errorf("delegate log record: %w", err)
+	}
+
+	return nil
 }
 
 func (h *contextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {

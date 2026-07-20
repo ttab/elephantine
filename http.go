@@ -147,7 +147,9 @@ func ListenAndServeContext(
 ) error {
 	closed := make(chan struct{})
 
-	go func() {
+	// G118: the goroutine intentionally uses a fresh context.Background below
+	// because ctx is already cancelled by the time the shutdown runs.
+	go func() { //nolint:gosec // G118: intentional fresh context, see below.
 		defer close(closed)
 
 		<-ctx.Done()
@@ -179,7 +181,7 @@ func ListenAndServeContext(
 		// otherwise.
 		<-closed
 
-		return err //nolint:wrapcheck
+		return err
 	} else if err != nil {
 		return fmt.Errorf("failed to start listening: %w", err)
 	}
@@ -209,7 +211,7 @@ func NewHTTPClientIntrumentation(
 			Name: "client_in_flight_requests",
 			Help: "A gauge of in-flight requests for the wrapped client.",
 		},
-		[]string{"client"},
+		[]string{clientLabel},
 	)
 
 	counter := prometheus.NewCounterVec(
@@ -217,7 +219,7 @@ func NewHTTPClientIntrumentation(
 			Name: "client_requests_total",
 			Help: "A counter for requests from the wrapped client.",
 		},
-		[]string{"client", "code", "method"},
+		[]string{clientLabel, codeLabel, methodLabel},
 	)
 
 	// dnsLatencyVec uses custom buckets based on expected dns durations.
@@ -230,7 +232,7 @@ func NewHTTPClientIntrumentation(
 			Help:    "Trace dns latency histogram.",
 			Buckets: []float64{.005, .01, .025, .05},
 		},
-		[]string{"event"},
+		[]string{eventLabel},
 	)
 
 	// tlsLatencyVec uses custom buckets based on expected tls durations.
@@ -243,7 +245,7 @@ func NewHTTPClientIntrumentation(
 			Help:    "Trace tls latency histogram.",
 			Buckets: []float64{.05, .1, .25, .5},
 		},
-		[]string{"event"},
+		[]string{eventLabel},
 	)
 
 	// histVec has no labels, making it a zero-dimensional ObserverVec.
@@ -253,7 +255,7 @@ func NewHTTPClientIntrumentation(
 			Help:    "A histogram of request latencies.",
 			Buckets: prometheus.DefBuckets,
 		},
-		[]string{"client"},
+		[]string{clientLabel},
 	)
 
 	collectors := []prometheus.Collector{
@@ -308,14 +310,14 @@ func (ci *HTTPClientInstrumentation) Client(name string, client *http.Client) er
 	}
 
 	cCounter, err := ci.counter.CurryWith(prometheus.Labels{
-		"client": name,
+		clientLabel: name,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to curry request counter: %w", err)
 	}
 
 	cHistVec, err := ci.histVec.CurryWith(prometheus.Labels{
-		"client": name,
+		clientLabel: name,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to curry duration histogram: %w", err)
@@ -331,7 +333,9 @@ func (ci *HTTPClientInstrumentation) Client(name string, client *http.Client) er
 	return nil
 }
 
-func (ci *HTTPClientInstrumentation) instrumentInFlight(client string, next http.RoundTripper) promhttp.RoundTripperFunc {
+func (ci *HTTPClientInstrumentation) instrumentInFlight(
+	client string, next http.RoundTripper,
+) promhttp.RoundTripperFunc {
 	return func(r *http.Request) (*http.Response, error) {
 		ci.inFlight.WithLabelValues(client).Inc()
 		defer ci.inFlight.WithLabelValues(client).Dec()

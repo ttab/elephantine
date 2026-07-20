@@ -145,7 +145,7 @@ func TestFanOutRecoveryStreakCountsCallsNotItems(t *testing.T) {
 	}
 }
 
-func TestFanOutPolledNoopWithoutRecovery(t *testing.T) {
+func TestFanOutPolledNoopWithoutRecovery(_ *testing.T) {
 	fo := pg.NewFanOut[string]("test_channel")
 	// Must not panic or count anything when EnableRecovery has not been
 	// called; consumers may call Polled unconditionally.

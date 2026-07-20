@@ -29,27 +29,27 @@ func TestContextWithFeatureFlags(t *testing.T) {
 	})
 
 	t.Run("single feature", func(t *testing.T) {
-		testFeatures(t, singleFeat, true, false)
+		testFeatures(singleFeat, t, true, false)
 	})
 
 	t.Run("both features", func(t *testing.T) {
-		testFeatures(t, addedFeat, true, true)
+		testFeatures(addedFeat, t, true, true)
 	})
 
 	t.Run("one feature disabled", func(t *testing.T) {
-		testFeatures(t, removedFeat, false, true)
+		testFeatures(removedFeat, t, false, true)
 	})
 }
 
 func testFeatures(
-	t *testing.T, ctx context.Context,
+	ctx context.Context, t *testing.T,
 	wantFace bool, wantFoot bool,
 ) {
 	t.Helper()
 
 	hasFace := elephantine.FeatureIsEnabled(ctx, mcFlagFace, false)
-	test.Equal(t, wantFace, hasFace, "face feature flag")
+	test.Equalf(t, wantFace, hasFace, "face feature flag")
 
 	hasFoot := elephantine.FeatureIsEnabled(ctx, mcFlagFoot, false)
-	test.Equal(t, wantFoot, hasFoot, "foot feature flag")
+	test.Equalf(t, wantFoot, hasFoot, "foot feature flag")
 }

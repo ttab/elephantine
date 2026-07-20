@@ -198,7 +198,7 @@ func (s *Subscriber) runListenLoop(ctx context.Context) error {
 
 		switch {
 		case errors.Is(err, context.Canceled):
-			return ctx.Err() //nolint:wrapcheck
+			return ctx.Err()
 		case errors.Is(err, errPingTimeout):
 			s.logger.WarnContext(ctx,
 				"listener ping timeout, reconnecting",
@@ -213,7 +213,7 @@ func (s *Subscriber) runListenLoop(ctx context.Context) error {
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err() //nolint:wrapcheck
+			return ctx.Err()
 		case <-time.After(5 * time.Second):
 		}
 	}
@@ -624,7 +624,7 @@ func (f *FanOut[T]) Polled(found int) {
 
 // ListenAll listens for notifications until the context is cancelled.
 func (f *FanOut[T]) ListenAll(ctx context.Context, l chan T) {
-	f.Listen(ctx, l, func(v T) bool {
+	f.Listen(ctx, l, func(_ T) bool {
 		return true
 	})
 }

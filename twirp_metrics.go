@@ -54,7 +54,7 @@ func WithTwirpMetricsCustomerFunc(fn func(ctx context.Context) string) TwirpMetr
 func NewTwirpMetricsHooks(opts ...TwirpMetricOptionFunc) (*twirp.ServerHooks, error) {
 	opt := TwirpMetricsOptions{
 		reg: prometheus.DefaultRegisterer,
-		contextCustomer: func(ctx context.Context) string {
+		contextCustomer: func(_ context.Context) string {
 			return ""
 		},
 	}
@@ -68,7 +68,7 @@ func NewTwirpMetricsHooks(opts ...TwirpMetricOptionFunc) (*twirp.ServerHooks, er
 			Name: "rpc_requests_total",
 			Help: "Number of RPC requests received.",
 		},
-		[]string{"service", "method", "customer"},
+		[]string{serviceLabel, methodLabel, customerLabel},
 	)
 	if err := opt.reg.Register(requestsReceived); err != nil {
 		return nil, fmt.Errorf("failed to register metric: %w", err)
@@ -78,7 +78,7 @@ func NewTwirpMetricsHooks(opts ...TwirpMetricOptionFunc) (*twirp.ServerHooks, er
 		Name:    "rpc_duration_seconds",
 		Help:    "Duration for a rpc call.",
 		Buckets: prometheus.ExponentialBuckets(0.005, 1.75, 15),
-	}, []string{"service", "method", "customer"})
+	}, []string{serviceLabel, methodLabel, customerLabel})
 	if err := opt.reg.Register(duration); err != nil {
 		return nil, fmt.Errorf("failed to register metric: %w", err)
 	}
@@ -88,7 +88,7 @@ func NewTwirpMetricsHooks(opts ...TwirpMetricOptionFunc) (*twirp.ServerHooks, er
 			Name: "rpc_responses_total",
 			Help: "Number of RPC responses sent.",
 		},
-		[]string{"service", "method", "status", "customer"},
+		[]string{serviceLabel, methodLabel, statusLabel, customerLabel},
 	)
 	if err := opt.reg.Register(responsesSent); err != nil {
 		return nil, fmt.Errorf("failed to register metric: %w", err)
