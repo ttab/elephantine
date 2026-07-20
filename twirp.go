@@ -10,7 +10,7 @@ import (
 	"github.com/twitchtv/twirp"
 )
 
-// InvalidArgumentf creates a invaldid argument error with a formatted message.
+// InvalidArgumentf creates an invalid argument error with a formatted message.
 func InvalidArgumentf(argument string, format string, a ...any) error {
 	pErr := fmt.Errorf(format, a...)
 

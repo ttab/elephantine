@@ -12,6 +12,11 @@ func NewMetricsHelper(reg prometheus.Registerer) *MetricsHelper {
 	}
 }
 
+// MetricsHelper reduces the boilerplate of registering Prometheus collectors.
+// Each method creates a collector, registers it, and assigns it through the
+// provided pointer. The first registration error is captured and short
+// circuits later calls, so a batch of registrations can be followed by a
+// single Err check.
 type MetricsHelper struct {
 	reg prometheus.Registerer
 	err error

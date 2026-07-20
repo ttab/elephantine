@@ -24,12 +24,14 @@ func debug() bool {
 	return testDebug
 }
 
-// Regenerate test fixtures will return true if the environment variable
-// REGENERATE is set to true.
+// Regenerate returns true if the environment variable REGENERATE is set to
+// "true", signalling that golden test fixtures should be regenerated.
 func Regenerate() bool {
 	return os.Getenv("REGENERATE") == "true"
 }
 
+// TestingT is the subset of *testing.T used by the assertion helpers in this
+// package, satisfied by both *testing.T and *testing.B.
 type TestingT interface {
 	Helper()
 	Fatalf(format string, args ...any)
@@ -182,7 +184,8 @@ func TestAgainstGolden[T any](
 		"must match golden file %q", goldenPath)
 }
 
-// EqualMessage runs a cmp.Diff with protobuf-specific options.
+// EqualDiffWithOptions runs a cmp.Diff deep equal check with the given
+// cmp.Options and readable diff output.
 func EqualDiffWithOptions[T any](
 	t TestingT,
 	want T, got T,

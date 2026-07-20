@@ -21,7 +21,7 @@ func NewSigningKey(t *testing.T) *ecdsa.PrivateKey {
 	return jwtKey
 }
 
-// Claims creates an elephantine.JWTClaims struct for use in thesting.
+// Claims creates an elephantine.JWTClaims struct for use in testing.
 func Claims(
 	t *testing.T, user string, scope string, units ...string,
 ) elephantine.JWTClaims {

@@ -12,6 +12,10 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 )
 
+// OpenIDConnectConfig mirrors the OpenID Connect provider metadata document
+// (the response from the issuer's ".well-known/openid-configuration"
+// endpoint). Only a subset of these fields is used by elephantine; the rest
+// are decoded for completeness.
 type OpenIDConnectConfig struct {
 	Issuer                                                    string            `json:"issuer"`
 	AuthorizationEndpoint                                     string            `json:"authorization_endpoint"`
@@ -111,6 +115,9 @@ func AuthenticationCLIFlags() []cli.Flag {
 	}
 }
 
+// AuthenticationConfig bundles the resolved OIDC configuration, an optional
+// client-credentials token source, and a JWT auth info parser. Create it with
+// AuthenticationConfigFromCLI or AuthenticationConfigFromSettings.
 type AuthenticationConfig struct {
 	OIDCConfig  *OpenIDConnectConfig
 	TokenSource oauth2.TokenSource
@@ -119,6 +126,9 @@ type AuthenticationConfig struct {
 	s AuthenticationSettings
 }
 
+// AuthenticationSettings holds the raw inputs used to build an
+// AuthenticationConfig: the OIDC configuration URL, the expected JWT audience
+// and scope prefix, and the client credentials used to mint tokens.
 type AuthenticationSettings struct {
 	OIDCConfig   string
 	Audience     string

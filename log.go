@@ -33,7 +33,7 @@ const (
 	LogKeyDocumentVersion = "document_version"
 	// LogKeyDocumentStatus is the status of a document.
 	LogKeyDocumentStatus = "document_status"
-	// LogKeyDocumentStatus is the id of a document status.
+	// LogKeyDocumentStatusID is the id of a document status.
 	LogKeyDocumentStatusID = "document_status_id"
 	// LogKeyTransaction is the name of a transaction, usually used to
 	// identify a transaction that has failed.
@@ -51,7 +51,7 @@ const (
 	// LogKeyDelay can be used to communicate the delay when logging
 	// information about retry attempts and backoff delays.
 	LogKeyDelay = "delay"
-	// LogKeyRetries can be used to communicate a retry attempt counter.
+	// LogKeyAttempts can be used to communicate a retry attempt counter.
 	LogKeyAttempts = "attempts"
 	// LogKeyBucket is used to log a S3 bucket name.
 	LogKeyBucket = "bucket"

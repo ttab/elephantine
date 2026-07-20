@@ -279,7 +279,7 @@ func (s *HealthServer) ListenAndServe(ctx context.Context) error {
 	return nil
 }
 
-// LivenessReadyCheck returns a ReadyFunc that verifies that an endpoint aswers
+// LivenessReadyCheck returns a ReadyFunc that verifies that an endpoint answers
 // to GET requests with 200 OK.
 func LivenessReadyCheck(endpoint string) ReadyFunc {
 	return func(ctx context.Context) error {

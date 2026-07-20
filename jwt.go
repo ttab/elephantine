@@ -38,7 +38,7 @@ func (c JWTClaims) HasScope(name string) bool {
 	return slices.Contains(scopes, name)
 }
 
-// HasScope returns true if the Scope claim contains any of the named scopes.
+// HasAnyScope returns true if the Scope claim contains any of the named scopes.
 func (c JWTClaims) HasAnyScope(names ...string) bool {
 	scopes := strings.Split(c.Scope, " ")
 
@@ -61,6 +61,8 @@ type AuthInfo struct {
 // missing, rather than being invalid, expired, or malformed.
 var ErrNoAuthorization = errors.New("no authorization provided")
 
+// AuthInfoParser validates bearer tokens and turns them into AuthInfo. See
+// JWTAuthInfoParser for the standard JWT-based implementation.
 type AuthInfoParser interface {
 	// AuthInfoFromHeader extracts the AuthInfo from a HTTP Authorization
 	// header, then validates the bearer token. Return ErrNoAuthorization
@@ -75,6 +77,9 @@ type AuthInfoParser interface {
 	ValidateTokenWithClaims(token string, claims jwt.Claims) (*jwt.Token, error)
 }
 
+// JWTAuthInfoParser is the standard AuthInfoParser implementation. It
+// validates JWTs using the configured key function, caches successful results
+// until the token expires, and optionally strips a scope prefix.
 type JWTAuthInfoParser struct {
 	keyfunc     jwt.Keyfunc
 	validator   *jwt.Validator
@@ -82,6 +87,9 @@ type JWTAuthInfoParser struct {
 	scopePrefix *regexp.Regexp
 }
 
+// JWTAuthInfoParserOptions configures a JWTAuthInfoParser: the expected
+// audience and issuer to validate against, and an optional scope prefix to
+// strip from token scopes.
 type JWTAuthInfoParserOptions struct {
 	Audience    string
 	Issuer      string

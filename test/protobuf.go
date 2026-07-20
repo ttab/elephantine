@@ -32,7 +32,8 @@ func EqualMessage(t TestingT,
 	EqualMessageWithOptions(t, want, got, nil, format, a...)
 }
 
-// EqualMessage runs a cmp.Diff with protobuf-specific options.
+// EqualMessageWithOptions runs a cmp.Diff with protobuf-specific options plus
+// the additional cmp.Options provided by the caller.
 func EqualMessageWithOptions(t TestingT,
 	want proto.Message, got proto.Message,
 	opts cmp.Options,
@@ -55,17 +56,27 @@ func EqualMessageWithOptions(t TestingT,
 	}
 }
 
+// GoldenHelper customises golden-file comparisons: CmpOpts contributes
+// cmp.Options used when diffing, and JSONTransform rewrites the decoded JSON
+// before it is stored, typically to mask volatile fields. See IgnoreField and
+// IgnoreTimestamps.
 type GoldenHelper interface {
 	CmpOpts() cmp.Options
 	JSONTransform(value map[string]any) error
 }
 
+// GoldenHelperForAny is an optional extension of GoldenHelper for helpers that
+// can also transform non-object JSON values, such as a top-level array.
 type GoldenHelperForAny interface {
 	JSONTransformAny(value any) error
 }
 
 var _ GoldenHelper = IgnoreField[string]{}
 
+// IgnoreField is a GoldenHelper that ignores a named field during comparison
+// and replaces its value with DummyValue when storing the golden file. An
+// optional Validator can assert something about the original value before it
+// is masked.
 type IgnoreField[T any] struct {
 	Name       string
 	DummyValue T
@@ -111,6 +122,10 @@ func CommonTimeFields() []string {
 	return []string{"timestamp", "modified", "created", "updated", "created_at", "updated_at"}
 }
 
+// IgnoreTimestamps is a GoldenHelper that masks timestamp fields during
+// comparison and replaces them with a fixed value when storing the golden
+// file. When Fields is empty CommonTimeFields is used, and Format defaults to
+// time.RFC3339.
 type IgnoreTimestamps struct {
 	Fields     []string
 	DummyValue time.Time

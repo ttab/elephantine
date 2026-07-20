@@ -14,12 +14,17 @@ import (
 //
 // See twirp_metrics.LICENSE
 
+// TwirpMetricsOptions holds the configuration for the Twirp metrics hooks
+// created by NewTwirpMetricsHooks. Set it through TwirpMetricOptionFunc
+// options.
 type TwirpMetricsOptions struct {
 	reg             prometheus.Registerer
 	testLatency     time.Duration
 	contextCustomer func(ctx context.Context) string
 }
 
+// TwirpMetricOptionFunc configures the metrics hooks created by
+// NewTwirpMetricsHooks.
 type TwirpMetricOptionFunc func(opts *TwirpMetricsOptions)
 
 // WithTwirpMetricsRegisterer uses a custom registerer for Twirp metrics.

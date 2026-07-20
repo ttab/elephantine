@@ -339,6 +339,9 @@ func (s *Subscriber) runListenerWithPing(ctx context.Context) (outErr error) {
 	}
 }
 
+// ChannelSubscription is implemented by types that can be registered with a
+// Subscriber (or the deprecated Subscribe) to receive PostgreSQL notifications
+// for a named channel. FanOut is the standard implementation.
 type ChannelSubscription interface {
 	// ChannelName to listen to.
 	ChannelName() string
@@ -507,6 +510,11 @@ func WithOverflowPolicy(p OverflowPolicy) FanOutOption {
 	}
 }
 
+// FanOut distributes the notifications for a single PostgreSQL channel to any
+// number of local listeners. It implements ChannelSubscription, so it can be
+// registered with a Subscriber, and decodes each notification payload into T
+// before delivering it to the listeners whose filter accepts it. Construct it
+// with NewFanOut.
 type FanOut[T any] struct {
 	channel        string
 	overflowPolicy OverflowPolicy

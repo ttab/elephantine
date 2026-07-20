@@ -38,8 +38,8 @@ func UnmarshalFile(path string, o any) (outErr error) {
 	return nil
 }
 
-// MarshalToFile is a utility function for marshalling a data structore to JSON
-// and write it to a fil. The JSON will be pretty printed.
+// MarshalFile is a utility function for marshalling a data structure to JSON
+// and writing it to a file. The JSON will be pretty printed.
 func MarshalFile(path string, o any) (outErr error) {
 	f, err := os.Create(path)
 	if err != nil {

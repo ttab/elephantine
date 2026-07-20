@@ -89,8 +89,12 @@ func HTTPErrorFromResponse(res *http.Response) error {
 	return &e
 }
 
+// ListenAndServeOption customises the behaviour of ListenAndServeContext, for
+// example to enable TLS through ListenAndServeTLS.
 type ListenAndServeOption func(s *http.Server, o *ListenAndServeOptions)
 
+// ListenAndServeOptions holds the internal configuration that
+// ListenAndServeOption functions modify.
 type ListenAndServeOptions struct {
 	listenFn func(ctx context.Context) error
 }
@@ -370,8 +374,11 @@ func NewHTTPClient(
 	return o.client
 }
 
+// HTTPClientOption customises a http.Client built by NewHTTPClient.
 type HTTPClientOption func(opts *HTTPClientOptions)
 
+// HTTPClientOptions holds the client, transport, and dialer that
+// HTTPClientOption functions modify when building a client with NewHTTPClient.
 type HTTPClientOptions struct {
 	client    *http.Client
 	transport *http.Transport
