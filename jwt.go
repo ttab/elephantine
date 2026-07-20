@@ -24,6 +24,7 @@ type JWTClaims struct {
 	OriginalSub string `json:"-"`
 
 	Name            string   `json:"sub_name"`
+	Email           string   `json:"email"`
 	Scope           string   `json:"scope"`
 	AuthorizedParty string   `json:"azp"`
 	ClientID        string   `json:"client_id"`
@@ -38,7 +39,7 @@ func (c JWTClaims) HasScope(name string) bool {
 	return slices.Contains(scopes, name)
 }
 
-// HasScope returns true if the Scope claim contains any of the named scopes.
+// HasAnyScope returns true if the Scope claim contains any of the named scopes.
 func (c JWTClaims) HasAnyScope(names ...string) bool {
 	scopes := strings.Split(c.Scope, " ")
 
@@ -61,6 +62,8 @@ type AuthInfo struct {
 // missing, rather than being invalid, expired, or malformed.
 var ErrNoAuthorization = errors.New("no authorization provided")
 
+// AuthInfoParser validates bearer tokens and turns them into AuthInfo. See
+// JWTAuthInfoParser for the standard JWT-based implementation.
 type AuthInfoParser interface {
 	// AuthInfoFromHeader extracts the AuthInfo from a HTTP Authorization
 	// header, then validates the bearer token. Return ErrNoAuthorization
@@ -75,6 +78,9 @@ type AuthInfoParser interface {
 	ValidateTokenWithClaims(token string, claims jwt.Claims) (*jwt.Token, error)
 }
 
+// JWTAuthInfoParser is the standard AuthInfoParser implementation. It
+// validates JWTs using the configured key function, caches successful results
+// until the token expires, and optionally strips a scope prefix.
 type JWTAuthInfoParser struct {
 	keyfunc     jwt.Keyfunc
 	validator   *jwt.Validator
@@ -82,6 +88,9 @@ type JWTAuthInfoParser struct {
 	scopePrefix *regexp.Regexp
 }
 
+// JWTAuthInfoParserOptions configures a JWTAuthInfoParser: the expected
+// audience and issuer to validate against, and an optional scope prefix to
+// strip from token scopes.
 type JWTAuthInfoParserOptions struct {
 	Audience    string
 	Issuer      string
@@ -105,6 +114,7 @@ func NewJWTAuthInfoParser(
 
 	go func() {
 		go cache.Start()
+
 		<-ctx.Done()
 		cache.Stop()
 	}()
@@ -129,8 +139,10 @@ func NewJWTAuthInfoParser(
 	}
 }
 
-func NewJWKSAuthInfoParser(ctx context.Context, jwksUrl string, opts JWTAuthInfoParserOptions) (*JWTAuthInfoParser, error) {
-	k, err := keyfunc.NewDefaultCtx(ctx, []string{jwksUrl})
+func NewJWKSAuthInfoParser(
+	ctx context.Context, jwksURL string, opts JWTAuthInfoParserOptions,
+) (*JWTAuthInfoParser, error) {
+	k, err := keyfunc.NewDefaultCtx(ctx, []string{jwksURL})
 	if err != nil {
 		return nil, fmt.Errorf("could not create keyfunc: %w", err)
 	}
@@ -138,8 +150,10 @@ func NewJWKSAuthInfoParser(ctx context.Context, jwksUrl string, opts JWTAuthInfo
 	return NewJWTAuthInfoParser(ctx, k.Keyfunc, opts), nil
 }
 
-func NewStaticAuthInfoParser(ctx context.Context, key ecdsa.PublicKey, opts JWTAuthInfoParserOptions) *JWTAuthInfoParser {
-	return NewJWTAuthInfoParser(ctx, func(t *jwt.Token) (any, error) {
+func NewStaticAuthInfoParser(
+	ctx context.Context, key ecdsa.PublicKey, opts JWTAuthInfoParserOptions,
+) *JWTAuthInfoParser {
+	return NewJWTAuthInfoParser(ctx, func(_ *jwt.Token) (any, error) {
 		return &key, nil
 	}, opts)
 }
@@ -160,7 +174,7 @@ func (p *JWTAuthInfoParser) AuthInfoFromToken(token string) (*AuthInfo, error) {
 	}
 
 	unitBase := &url.URL{
-		Scheme: "core",
+		Scheme: coreURIScheme,
 		Host:   "unit",
 	}
 
@@ -214,6 +228,7 @@ func (p *JWTAuthInfoParser) ValidateTokenWithClaims(token string, claims jwt.Cla
 	if err != nil {
 		return nil, fmt.Errorf("invalid claims: %w", err)
 	}
+
 	return parsed, nil
 }
 
@@ -232,9 +247,13 @@ func (p *JWTAuthInfoParser) AuthInfoFromHeader(authorization string) (*AuthInfo,
 	return p.AuthInfoFromToken(token)
 }
 
+// coreURIScheme is the URI scheme used for subject, unit, and application
+// identifiers in JWT claims.
+const coreURIScheme = "core"
+
 var (
-	appURI  = url.URL{Scheme: "core", Host: "application"}
-	userURI = url.URL{Scheme: "core", Host: "user"}
+	appURI  = url.URL{Scheme: coreURIScheme, Host: "application"}
+	userURI = url.URL{Scheme: coreURIScheme, Host: "user"}
 )
 
 func claimsToSubject(claims JWTClaims) (string, error) {
@@ -260,7 +279,12 @@ func claimsToSubject(claims JWTClaims) (string, error) {
 
 // Valid validates the jwt.RegisteredClaims.
 func (p *JWTAuthInfoParser) Valid(c jwt.Claims) error {
-	return p.validator.Validate(c)
+	err := p.validator.Validate(c)
+	if err != nil {
+		return fmt.Errorf("validate claims: %w", err)
+	}
+
+	return nil
 }
 
 // SetAuthInfo creates a child context with the given authentication

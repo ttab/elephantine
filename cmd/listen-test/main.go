@@ -15,7 +15,7 @@ import (
 func main() {
 	err := run(context.Background())
 	if err != nil {
-		println(err.Error())
+		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
 }
@@ -51,8 +51,8 @@ func run(ctx context.Context) error {
 
 	go sendStuff(ctx, logger, dbpool, subA, subB)
 
-	go recieve(ctx, subA)
-	go recieve(ctx, subB)
+	go receive(ctx, subA)
+	go receive(ctx, subB)
 
 	<-ctx.Done()
 
@@ -74,7 +74,7 @@ func sendStuff(
 		case <-ctx.Done():
 			return
 		case <-aTick.C:
-			println("sending a")
+			fmt.Fprintln(os.Stdout, "sending a")
 
 			err := subA.Publish(ctx, db, "hello from A")
 			if err != nil {
@@ -82,7 +82,7 @@ func sendStuff(
 					"channel", "a")
 			}
 		case <-bTick.C:
-			println("sending b")
+			fmt.Fprintln(os.Stdout, "sending b")
 
 			err := subB.Publish(ctx, db, "hello from B")
 			if err != nil {
@@ -93,7 +93,7 @@ func sendStuff(
 	}
 }
 
-func recieve(ctx context.Context, sub *pg.FanOut[string]) {
+func receive(ctx context.Context, sub *pg.FanOut[string]) {
 	msgs := make(chan string)
 
 	go sub.ListenAll(ctx, msgs)
@@ -103,7 +103,7 @@ func recieve(ctx context.Context, sub *pg.FanOut[string]) {
 		case <-ctx.Done():
 			return
 		case msg := <-msgs:
-			println(msg)
+			fmt.Fprintln(os.Stdout, msg)
 		}
 	}
 }

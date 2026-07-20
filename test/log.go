@@ -34,6 +34,10 @@ func NewLogHandler(t TestingLogger, level slog.Level) slog.Handler {
 	return &h
 }
 
+// LogHandler is a slog.Handler that writes log records through a
+// TestingLogger's Log method, so log output is attributed to the running test.
+// Once the test's cleanup has run it silently drops further records. Create it
+// with NewLogHandler.
 type LogHandler struct {
 	t       TestingLogger
 	handler *slog.TextHandler

@@ -37,7 +37,7 @@ func RunInJobLock(
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err() //nolint: wrapcheck
+			return ctx.Err()
 		default:
 		}
 	}

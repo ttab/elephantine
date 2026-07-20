@@ -22,18 +22,32 @@ func CloneMessage[T proto.Message](msg T) T {
 	return proto.Clone(msg).(T)
 }
 
-// EqualMessage runs a cmp.Diff with protobuf-specific options.
-func EqualMessage(t TestingT,
+// EqualMessagef runs a cmp.Diff with protobuf-specific options.
+func EqualMessagef(t TestingT,
 	want proto.Message, got proto.Message,
 	format string, a ...any,
 ) {
 	t.Helper()
 
-	EqualMessageWithOptions(t, want, got, nil, format, a...)
+	EqualMessageWithOptionsf(t, want, got, nil, format, a...)
 }
 
-// EqualMessage runs a cmp.Diff with protobuf-specific options.
-func EqualMessageWithOptions(t TestingT,
+// EqualMessage is a shim for [EqualMessagef].
+//
+// Deprecated: use [EqualMessagef] instead.
+//
+//go:fix inline
+//nolint:goprintffuncname // deprecated shim.
+func EqualMessage(t TestingT,
+	want proto.Message, got proto.Message,
+	format string, a ...any,
+) {
+	EqualMessagef(t, want, got, format, a...)
+}
+
+// EqualMessageWithOptionsf runs a cmp.Diff with protobuf-specific options plus
+// the additional cmp.Options provided by the caller.
+func EqualMessageWithOptionsf(t TestingT,
 	want proto.Message, got proto.Message,
 	opts cmp.Options,
 	format string, a ...any,
@@ -55,17 +69,41 @@ func EqualMessageWithOptions(t TestingT,
 	}
 }
 
+// EqualMessageWithOptions is a shim for [EqualMessageWithOptionsf].
+//
+// Deprecated: use [EqualMessageWithOptionsf] instead.
+//
+//go:fix inline
+//nolint:goprintffuncname // deprecated shim.
+func EqualMessageWithOptions(t TestingT,
+	want proto.Message, got proto.Message,
+	opts cmp.Options,
+	format string, a ...any,
+) {
+	EqualMessageWithOptionsf(t, want, got, opts, format, a...)
+}
+
+// GoldenHelper customises golden-file comparisons: CmpOpts contributes
+// cmp.Options used when diffing, and JSONTransform rewrites the decoded JSON
+// before it is stored, typically to mask volatile fields. See IgnoreField and
+// IgnoreTimestamps.
 type GoldenHelper interface {
 	CmpOpts() cmp.Options
 	JSONTransform(value map[string]any) error
 }
 
+// GoldenHelperForAny is an optional extension of GoldenHelper for helpers that
+// can also transform non-object JSON values, such as a top-level array.
 type GoldenHelperForAny interface {
 	JSONTransformAny(value any) error
 }
 
 var _ GoldenHelper = IgnoreField[string]{}
 
+// IgnoreField is a GoldenHelper that ignores a named field during comparison
+// and replaces its value with DummyValue when storing the golden file. An
+// optional Validator can assert something about the original value before it
+// is masked.
 type IgnoreField[T any] struct {
 	Name       string
 	DummyValue T
@@ -83,7 +121,7 @@ func (fi IgnoreField[T]) CmpOpts() cmp.Options {
 
 // JSONTransform implements GoldenHelper.
 func (fi IgnoreField[T]) JSONTransform(value map[string]any) error {
-	return keyReplacement(value, func(m map[string]any, k string) error {
+	return keyReplacement(value, func(m map[string]any, _ string) error {
 		current, ok := m[fi.Name]
 		if !ok {
 			return nil
@@ -111,6 +149,10 @@ func CommonTimeFields() []string {
 	return []string{"timestamp", "modified", "created", "updated", "created_at", "updated_at"}
 }
 
+// IgnoreTimestamps is a GoldenHelper that masks timestamp fields during
+// comparison and replaces them with a fixed value when storing the golden
+// file. When Fields is empty CommonTimeFields is used, and Format defaults to
+// time.RFC3339.
 type IgnoreTimestamps struct {
 	Fields     []string
 	DummyValue time.Time
@@ -217,10 +259,10 @@ func keyReplacement(
 	return tMap(value)
 }
 
-// TestMessageAgainstGolden compares a protobuf message against the contents of
+// MessageAgainstGolden compares a protobuf message against the contents of
 // the file at the goldenPath. Run with regenerate set to true to create or
 // update the file.
-func TestMessageAgainstGolden(
+func MessageAgainstGolden(
 	t *testing.T,
 	regenerate bool,
 	got proto.Message,
@@ -240,51 +282,51 @@ func TestMessageAgainstGolden(
 		}
 
 		data, err := opts.Marshal(got)
-		Must(t, err, "marshal proto message")
+		Mustf(t, err, "marshal proto message")
 
 		var obj map[string]any
 
 		err = json.Unmarshal(data, &obj)
-		Must(t, err, "unmarshal message for transform")
+		Mustf(t, err, "unmarshal message for transform")
 
 		for i := range helpers {
 			err := helpers[i].JSONTransform(obj)
-			Must(t, err, "transform message for storage")
+			Mustf(t, err, "transform message for storage")
 		}
 
 		data, err = json.Marshal(obj)
-		Must(t, err, "marshal message for roundtrip in %q", goldenPath)
+		Mustf(t, err, "marshal message for roundtrip in %q", goldenPath)
 
 		proto.Reset(got)
 
 		err = protojson.Unmarshal(data, got)
-		Must(t, err, "roundtrip back to proto message")
+		Mustf(t, err, "roundtrip back to proto message")
 
 		data, err = opts.Marshal(got)
-		Must(t, err, "marshal roundtripped proto message")
+		Mustf(t, err, "marshal roundtripped proto message")
 
 		var buf bytes.Buffer
 
 		// Indent output because of this tomfoolery:
 		// https://github.com/golang/protobuf/issues/1121
 		err = json.Indent(&buf, data, "", "  ")
-		Must(t, err, "indent proto JSON")
+		Mustf(t, err, "indent proto JSON")
 
 		// End all files with a newline
 		_ = buf.WriteByte('\n')
 
 		err = os.WriteFile(goldenPath, buf.Bytes(), 0o600)
-		Must(t, err, "write golden file %q", goldenPath)
+		Mustf(t, err, "write golden file %q", goldenPath)
 	}
 
 	wantData, err := os.ReadFile(goldenPath)
-	Must(t, err, "read from golden file %q", goldenPath)
+	Mustf(t, err, "read from golden file %q", goldenPath)
 
 	wantValue := reflect.New(reflect.TypeOf(got).Elem())
 	wantMessage := wantValue.Interface().(proto.Message)
 
 	err = protojson.Unmarshal(wantData, wantMessage)
-	Must(t, err, "unmarshal data from golden file %q", goldenPath)
+	Mustf(t, err, "unmarshal data from golden file %q", goldenPath)
 
 	var cmpOpts cmp.Options
 
@@ -292,13 +334,31 @@ func TestMessageAgainstGolden(
 		cmpOpts = append(cmpOpts, h.CmpOpts()...)
 	}
 
-	EqualMessageWithOptions(t, wantMessage, got, cmpOpts, "must match golden file %q", goldenPath)
+	EqualMessageWithOptionsf(t, wantMessage, got, cmpOpts, "must match golden file %q", goldenPath)
 }
 
-// TestMessagesAgainstGolden compares a slice of protobuf messages against the
+// TestMessageAgainstGolden compares a protobuf message against the contents of
+// the file at the goldenPath. Run with regenerate set to true to create or
+// update the file.
+//
+// Deprecated: use [MessageAgainstGolden] instead.
+//
+//go:fix inline
+//nolint:revive // deprecated shim; a single call keeps it inlinable.
+func TestMessageAgainstGolden(
+	t *testing.T,
+	regenerate bool,
+	got proto.Message,
+	goldenPath string,
+	helpers ...GoldenHelper,
+) {
+	MessageAgainstGolden(t, regenerate, got, goldenPath, helpers...)
+}
+
+// MessagesAgainstGolden compares a slice of protobuf messages against the
 // contents of the file at the goldenPath. Run with regenerate set to true to
 // create or update the file.
-func TestMessagesAgainstGolden[T proto.Message](
+func MessagesAgainstGolden[T proto.Message](
 	t *testing.T,
 	regenerate bool,
 	gotSlice []T,
@@ -324,35 +384,35 @@ func TestMessagesAgainstGolden[T proto.Message](
 			got := proto.Clone(item)
 
 			data, err := opts.Marshal(got)
-			Must(t, err, "marshal proto message")
+			Mustf(t, err, "marshal proto message")
 
 			var obj map[string]any
 
 			err = json.Unmarshal(data, &obj)
-			Must(t, err, "unmarshal message for transform")
+			Mustf(t, err, "unmarshal message for transform")
 
 			for i := range helpers {
 				err := helpers[i].JSONTransform(obj)
-				Must(t, err, "transform message for storage")
+				Mustf(t, err, "transform message for storage")
 			}
 
 			data, err = json.Marshal(obj)
-			Must(t, err, "marshal message for roundtrip in %q", goldenPath)
+			Mustf(t, err, "marshal message for roundtrip in %q", goldenPath)
 
 			proto.Reset(got)
 
 			err = protojson.Unmarshal(data, got)
-			Must(t, err, "roundtrip back to proto message")
+			Mustf(t, err, "roundtrip back to proto message")
 
 			data, err = opts.Marshal(got)
-			Must(t, err, "marshal roundtripped proto message")
+			Mustf(t, err, "marshal roundtripped proto message")
 
 			buf.Reset()
 
 			// Indent output because of this tomfoolery:
 			// https://github.com/golang/protobuf/issues/1121
 			err = json.Indent(&buf, data, "", "  ")
-			Must(t, err, "indent proto JSON")
+			Mustf(t, err, "indent proto JSON")
 
 			raw := make([]byte, buf.Len())
 
@@ -362,19 +422,19 @@ func TestMessagesAgainstGolden[T proto.Message](
 		}
 
 		data, err := json.MarshalIndent(rawSlice, "", "  ")
-		Must(t, err, "marshal slice")
+		Mustf(t, err, "marshal slice")
 
 		err = os.WriteFile(goldenPath, data, 0o600)
-		Must(t, err, "write golden file %q", goldenPath)
+		Mustf(t, err, "write golden file %q", goldenPath)
 	}
 
 	wantData, err := os.ReadFile(goldenPath)
-	Must(t, err, "read from golden file %q", goldenPath)
+	Mustf(t, err, "read from golden file %q", goldenPath)
 
 	var rawSlice []json.RawMessage
 
 	err = json.Unmarshal(wantData, &rawSlice)
-	Must(t, err, "unmarshal slice")
+	Mustf(t, err, "unmarshal slice")
 
 	var cmpOpts cmp.Options
 
@@ -397,10 +457,26 @@ func TestMessagesAgainstGolden[T proto.Message](
 		wantMessage := wantValue.Interface().(proto.Message)
 
 		err = protojson.Unmarshal(rawSlice[i], wantMessage)
-		Must(t, err, "item %d: unmarshal data from golden file %q",
-			i+1, goldenPath)
+		Mustf(t, err, "item %d: unmarshal data from golden file %q", i+1, goldenPath)
 
-		EqualMessageWithOptions(t, wantMessage, got, cmpOpts,
-			"item %d: Must match golden file %q", i+1, goldenPath)
+		EqualMessageWithOptionsf(t, wantMessage, got, cmpOpts, "item %d: Must match golden file %q", i+1, goldenPath)
 	}
+}
+
+// TestMessagesAgainstGolden compares a slice of protobuf messages against the
+// contents of the file at the goldenPath. Run with regenerate set to true to
+// create or update the file.
+//
+// Deprecated: use [MessagesAgainstGolden] instead.
+//
+//go:fix inline
+//nolint:revive // deprecated shim; a single call keeps it inlinable.
+func TestMessagesAgainstGolden[T proto.Message](
+	t *testing.T,
+	regenerate bool,
+	gotSlice []T,
+	goldenPath string,
+	helpers ...GoldenHelper,
+) {
+	MessagesAgainstGolden(t, regenerate, gotSlice, goldenPath, helpers...)
 }

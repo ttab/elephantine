@@ -174,4 +174,3 @@ func TestSubscriberWithOptions(t *testing.T) {
 		t.Fatal("expected non-nil subscriber")
 	}
 }
-

@@ -11,8 +11,8 @@ import (
 
 // RHandleFunc creates a httprouter.Handle from a function that can return an
 // error. If the error is a HTTPError the information it carries will be used
-// for the error response. Otherwise it will be treated as a internal server
-// eror and the error message will be sent as the response.
+// for the error response. Otherwise it will be treated as an internal server
+// error and the error message will be sent as the response.
 //
 // Deprecated: use the standard library muxer and HTTPErrorHandlerFunc instead.
 func RHandleFunc(

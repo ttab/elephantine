@@ -50,7 +50,7 @@ var cases = map[string]corsTestCase{
 }
 
 func TestCORSMiddleware(t *testing.T) {
-	yesMan := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	yesMan := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -71,25 +71,25 @@ func TestCORSMiddleware(t *testing.T) {
 
 		t.Run(name, func(t *testing.T) {
 			req, err := http.NewRequest(http.MethodOptions, server.URL, nil)
-			test.Must(t, err, "create test request")
+			test.Mustf(t, err, "create test request")
 
 			req.Header.Set("Access-Control-Request-Method", http.MethodGet)
 			req.Header.Set("Access-Control-Request-Headers", "Authorization")
 			req.Header.Set("Origin", tc.Origin)
 
 			res, err := client.Do(req)
-			test.Must(t, err, "make request")
+			test.Mustf(t, err, "make request")
 
-			test.Must(t, res.Body.Close(), "close response body")
+			test.Mustf(t, res.Body.Close(), "close response body")
 
-			test.Equal(t, tc.ExpectStatus, res.StatusCode,
+			test.Equalf(t, tc.ExpectStatus, res.StatusCode,
 				"get correct status code")
 		})
 	}
 }
 
 func TestCORSMiddlewarePatterns(t *testing.T) {
-	yesMan := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	yesMan := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -110,18 +110,18 @@ func TestCORSMiddlewarePatterns(t *testing.T) {
 
 		t.Run(name, func(t *testing.T) {
 			req, err := http.NewRequest(http.MethodOptions, server.URL, nil)
-			test.Must(t, err, "create test request")
+			test.Mustf(t, err, "create test request")
 
 			req.Header.Set("Access-Control-Request-Method", http.MethodGet)
 			req.Header.Set("Access-Control-Request-Headers", "Authorization")
 			req.Header.Set("Origin", tc.Origin)
 
 			res, err := client.Do(req)
-			test.Must(t, err, "make request")
+			test.Mustf(t, err, "make request")
 
-			test.Must(t, res.Body.Close(), "close response body")
+			test.Mustf(t, res.Body.Close(), "close response body")
 
-			test.Equal(t, tc.ExpectStatus, res.StatusCode,
+			test.Equalf(t, tc.ExpectStatus, res.StatusCode,
 				"get correct status code")
 		})
 	}

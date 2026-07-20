@@ -15,13 +15,15 @@ import (
 // NewSigningKey creates a signing key for use with a
 // elephantine.NewStaticAuthInfoParser.
 func NewSigningKey(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+
 	jwtKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
-	Must(t, err, "generate signing key")
+	Mustf(t, err, "generate signing key")
 
 	return jwtKey
 }
 
-// Claims creates an elephantine.JWTClaims struct for use in thesting.
+// Claims creates an elephantine.JWTClaims struct for use in testing.
 func Claims(
 	t *testing.T, user string, scope string, units ...string,
 ) elephantine.JWTClaims {
@@ -58,7 +60,7 @@ func AccessKey(
 	token := jwt.NewWithClaims(jwt.SigningMethodES384, claims)
 
 	ss, err := token.SignedString(key)
-	Must(t, err, "sign JWT token")
+	Mustf(t, err, "sign JWT token")
 
 	return ss
 }

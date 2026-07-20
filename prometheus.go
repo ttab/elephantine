@@ -6,12 +6,30 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// Prometheus metric label names used by the instrumentation in this package.
+// These are distinct from the log attribute keys (LogKey*), even where the
+// string value happens to coincide.
+const (
+	clientLabel   = "client"
+	codeLabel     = "code"
+	methodLabel   = "method"
+	eventLabel    = "event"
+	serviceLabel  = "service"
+	customerLabel = "customer"
+	statusLabel   = "status"
+)
+
 func NewMetricsHelper(reg prometheus.Registerer) *MetricsHelper {
 	return &MetricsHelper{
 		reg: reg,
 	}
 }
 
+// MetricsHelper reduces the boilerplate of registering Prometheus collectors.
+// Each method creates a collector, registers it, and assigns it through the
+// provided pointer. The first registration error is captured and short
+// circuits later calls, so a batch of registrations can be followed by a
+// single Err check.
 type MetricsHelper struct {
 	reg prometheus.Registerer
 	err error

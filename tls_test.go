@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -29,10 +30,10 @@ func generateSelfSignedCert(
 	t.Helper()
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	test.Must(t, err, "generate ECDSA key")
+	test.Mustf(t, err, "generate ECDSA key")
 
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	test.Must(t, err, "generate serial number")
+	test.Mustf(t, err, "generate serial number")
 
 	template := x509.Certificate{
 		SerialNumber: serial,
@@ -51,10 +52,10 @@ func generateSelfSignedCert(
 	certDER, err := x509.CreateCertificate(
 		rand.Reader, &template, &template, &key.PublicKey, key,
 	)
-	test.Must(t, err, "create certificate")
+	test.Mustf(t, err, "create certificate")
 
 	keyDER, err := x509.MarshalECPrivateKey(key)
-	test.Must(t, err, "marshal EC private key")
+	test.Mustf(t, err, "marshal EC private key")
 
 	certPEM = pem.EncodeToMemory(&pem.Block{
 		Type:  "CERTIFICATE",
@@ -78,10 +79,10 @@ func writeCertFiles(
 	keyFile := filepath.Join(dir, "key.pem")
 
 	err := os.WriteFile(certFile, certPEM, 0o600)
-	test.Must(t, err, "write cert file")
+	test.Mustf(t, err, "write cert file")
 
 	err = os.WriteFile(keyFile, keyPEM, 0o600)
-	test.Must(t, err, "write key file")
+	test.Mustf(t, err, "write key file")
 
 	return certFile, keyFile
 }
@@ -98,10 +99,10 @@ func TestCertificateSource(t *testing.T) {
 		elephantine.CertSourcePollInterval(50*time.Millisecond),
 		elephantine.CertSourceSettleDelay(200*time.Millisecond),
 	)
-	test.Must(t, err, "create certificate source")
+	test.Mustf(t, err, "create certificate source")
 
 	cert1, err := cs.GetCertificate(nil)
-	test.Must(t, err, "get initial certificate")
+	test.Mustf(t, err, "get initial certificate")
 
 	if cert1 == nil {
 		t.Fatal("initial certificate should not be nil")
@@ -127,23 +128,23 @@ func TestCertificateSource(t *testing.T) {
 	certPEM2, keyPEM2 := generateSelfSignedCert(t, "rotated.example.com")
 
 	err = os.WriteFile(certFile, certPEM2, 0o600)
-	test.Must(t, err, "overwrite cert file")
+	test.Mustf(t, err, "overwrite cert file")
 
 	err = os.WriteFile(keyFile, keyPEM2, 0o600)
-	test.Must(t, err, "overwrite key file")
+	test.Mustf(t, err, "overwrite key file")
 
 	// Wait for poll + settle + some margin.
 	time.Sleep(500 * time.Millisecond)
 
 	cert2, err := cs.GetCertificate(nil)
-	test.Must(t, err, "get rotated certificate")
+	test.Mustf(t, err, "get rotated certificate")
 
 	if cert2 == cert1 {
 		t.Fatal("certificate should have been reloaded")
 	}
 
 	parsed, err := x509.ParseCertificate(cert2.Certificate[0])
-	test.Must(t, err, "parse rotated certificate")
+	test.Mustf(t, err, "parse rotated certificate")
 
 	if parsed.Subject.CommonName != "rotated.example.com" {
 		t.Fatalf("expected CN 'rotated.example.com', got %q",
@@ -166,10 +167,10 @@ func TestCertificateSourceSettleDebounce(t *testing.T) {
 		elephantine.CertSourcePollInterval(50*time.Millisecond),
 		elephantine.CertSourceSettleDelay(300*time.Millisecond),
 	)
-	test.Must(t, err, "create certificate source")
+	test.Mustf(t, err, "create certificate source")
 
 	initialCert, err := cs.GetCertificate(nil)
-	test.Must(t, err, "get initial certificate")
+	test.Mustf(t, err, "get initial certificate")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -190,15 +191,15 @@ func TestCertificateSourceSettleDebounce(t *testing.T) {
 		newCert, newKey := generateSelfSignedCert(t, "debounce.example.com")
 
 		err = os.WriteFile(certFile, newCert, 0o600)
-		test.Must(t, err, "overwrite cert file")
+		test.Mustf(t, err, "overwrite cert file")
 
 		err = os.WriteFile(keyFile, newKey, 0o600)
-		test.Must(t, err, "overwrite key file")
+		test.Mustf(t, err, "overwrite key file")
 	}
 
 	// During the rapid writes the cert should not have been reloaded yet.
 	midCert, err := cs.GetCertificate(nil)
-	test.Must(t, err, "get mid-write certificate")
+	test.Mustf(t, err, "get mid-write certificate")
 
 	if midCert != initialCert {
 		t.Fatal("certificate should not have been reloaded during rapid writes")
@@ -208,7 +209,7 @@ func TestCertificateSourceSettleDebounce(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	reloadedCert, err := cs.GetCertificate(nil)
-	test.Must(t, err, "get reloaded certificate")
+	test.Mustf(t, err, "get reloaded certificate")
 
 	if reloadedCert == initialCert {
 		t.Fatal("certificate should have been reloaded after settle")
@@ -230,10 +231,10 @@ func TestCertificateSourceBadReload(t *testing.T) {
 		elephantine.CertSourcePollInterval(50*time.Millisecond),
 		elephantine.CertSourceSettleDelay(200*time.Millisecond),
 	)
-	test.Must(t, err, "create certificate source")
+	test.Mustf(t, err, "create certificate source")
 
 	goodCert, err := cs.GetCertificate(nil)
-	test.Must(t, err, "get initial certificate")
+	test.Mustf(t, err, "get initial certificate")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -250,17 +251,17 @@ func TestCertificateSourceBadReload(t *testing.T) {
 
 	// Write invalid content to both files.
 	err = os.WriteFile(certFile, []byte("not a cert"), 0o600)
-	test.Must(t, err, "write invalid cert")
+	test.Mustf(t, err, "write invalid cert")
 
 	err = os.WriteFile(keyFile, []byte("not a key"), 0o600)
-	test.Must(t, err, "write invalid key")
+	test.Mustf(t, err, "write invalid key")
 
 	// Wait for poll + settle + margin.
 	time.Sleep(500 * time.Millisecond)
 
 	// The old cert should still be served.
 	currentCert, err := cs.GetCertificate(nil)
-	test.Must(t, err, "get certificate after bad reload")
+	test.Mustf(t, err, "get certificate after bad reload")
 
 	if currentCert != goodCert {
 		t.Fatal("certificate should not have changed after failed reload")
@@ -285,7 +286,7 @@ func TestCertificateSourceHTTPServer(t *testing.T) {
 		elephantine.CertSourcePollInterval(50*time.Millisecond),
 		elephantine.CertSourceSettleDelay(200*time.Millisecond),
 	)
-	test.Must(t, err, "create certificate source")
+	test.Mustf(t, err, "create certificate source")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -300,7 +301,7 @@ func TestCertificateSourceHTTPServer(t *testing.T) {
 
 	// Start a TLS server on a random port.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	test.Must(t, err, "listen on random port")
+	test.Mustf(t, err, "listen on random port")
 
 	server := http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -318,13 +319,14 @@ func TestCertificateSourceHTTPServer(t *testing.T) {
 		defer close(serverDone)
 
 		sErr := server.ServeTLS(ln, "", "")
-		if sErr != nil && sErr != http.ErrServerClosed {
+		if sErr != nil && !errors.Is(sErr, http.ErrServerClosed) {
 			t.Errorf("unexpected server error: %v", sErr)
 		}
 	}()
 
 	t.Cleanup(func() {
 		_ = server.Close()
+
 		<-serverDone
 	})
 
@@ -345,10 +347,10 @@ func TestCertificateSourceHTTPServer(t *testing.T) {
 	)
 
 	err = os.WriteFile(certFile, certPEM2, 0o600)
-	test.Must(t, err, "overwrite cert file")
+	test.Mustf(t, err, "overwrite cert file")
 
 	err = os.WriteFile(keyFile, keyPEM2, 0o600)
-	test.Must(t, err, "overwrite key file")
+	test.Mustf(t, err, "overwrite key file")
 
 	// Wait for poll + settle + margin.
 	time.Sleep(500 * time.Millisecond)
@@ -374,7 +376,7 @@ func tlsConnectAndGetCN(
 	conn, err := tls.Dial("tcp", addr, &tls.Config{
 		RootCAs: rootCAs,
 	})
-	test.Must(t, err, "TLS dial")
+	test.Mustf(t, err, "TLS dial")
 
 	defer func() {
 		_ = conn.Close()

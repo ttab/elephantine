@@ -16,6 +16,9 @@ import (
 	"github.com/ttab/elephantine"
 )
 
+// DBExec is the subset of the pgx API needed to execute a statement, satisfied
+// by both *pgxpool.Pool and pgx.Tx. It lets helpers accept either a pool or a
+// transaction.
 type DBExec interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }
@@ -99,8 +102,9 @@ func PTime(t *time.Time) pgtype.Timestamptz {
 	}
 }
 
-// Time converts a stdlib time.Time to a pgtype.Timestamptz, but will return a
-// Timestamptz that represents a null value in the database if t is zero.
+// TimeOrNull converts a stdlib time.Time to a pgtype.Timestamptz, but will
+// return a Timestamptz that represents a null value in the database if t is
+// zero.
 func TimeOrNull(t time.Time) pgtype.Timestamptz {
 	if t.IsZero() {
 		return pgtype.Timestamptz{}
@@ -117,6 +121,7 @@ func PUUID(u *uuid.UUID) pgtype.UUID {
 	if u == nil {
 		return pgtype.UUID{}
 	}
+
 	return pgtype.UUID{
 		Bytes: *u,
 		Valid: true,

@@ -2,6 +2,8 @@ package test
 
 import "context"
 
+// Cleaner is the subset of testing.TB used to register cleanup callbacks,
+// satisfied by *testing.T.
 type Cleaner interface {
 	Cleanup(fn func())
 }

@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	EnvServiceAccountToken         = "SERVICE_ACCOUNT_TOKEN"
-	DefaultServiceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	EnvServiceAccountToken = "SERVICE_ACCOUNT_TOKEN"
+	// A well-known file path, not a credential.
+	DefaultServiceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token" //nolint:gosec // file path
 	EnvVaultAuthRole               = "VAULT_AUTH_ROLE"
 	DefaultAuthRole                = "deploy"
 )
@@ -212,6 +213,7 @@ func (v *Vault) dataMapFromEntry(ctx context.Context, path string) (map[string]s
 		s, ok := v.(string)
 		if !ok {
 			d[k] = fmt.Sprintf("%v", v)
+
 			continue
 		}
 

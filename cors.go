@@ -9,6 +9,9 @@ import (
 	"github.com/ryanuber/go-glob"
 )
 
+// CORSOptions configures the CORS middleware and the AllowOrigin check: which
+// origins are allowed, which methods and headers are permitted, and how long
+// preflight responses may be cached.
 type CORSOptions struct {
 	AllowInsecure          bool
 	AllowInsecureLocalhost bool
@@ -30,7 +33,6 @@ func CORSMiddleware(opts CORSOptions, handler http.Handler) http.Handler {
 		header := w.Header()
 
 		if r.Method == http.MethodOptions && accessMethod != "" {
-
 			if !opts.AllowOrigin(origin) {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 

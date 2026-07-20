@@ -18,6 +18,9 @@ import (
 // registration in a conditional.
 var ErrTaskDisabled = errors.New("task disabled")
 
+// BackoffFunction returns how long to wait before the given retry attempt. It
+// is used by ErrGroup.GoWithRetries; see StaticBackoff for a constant-delay
+// implementation.
 type BackoffFunction func(retry int) time.Duration
 
 func NewErrGroup(ctx context.Context, logger *slog.Logger) *ErrGroup {
@@ -178,9 +181,16 @@ func (eg *ErrGroup) Wait() error {
 	// returned.
 	defer eg.cancel()
 
-	return eg.grp.Wait()
+	err := eg.grp.Wait()
+	if err != nil {
+		return fmt.Errorf("run task group: %w", err)
+	}
+
+	return nil
 }
 
+// ErrPanicRecovered is the error a task fails with when CallWithRecover
+// recovers a panic. PanicValue is the value that was passed to panic().
 type ErrPanicRecovered struct {
 	PanicValue any
 }

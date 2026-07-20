@@ -16,6 +16,8 @@ import (
 	"github.com/ttab/elephantine/pg/postgres"
 )
 
+// JobLockState describes whether a job lock is held, lost, or released. It is
+// sent on the channel a JobLock uses to notify its holder of state changes.
 type JobLockState string
 
 const (

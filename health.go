@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/http/pprof" //nolint:gosec
+	"net/http/pprof"
 	"strings"
 	"time"
 
@@ -231,7 +231,7 @@ func (s *HealthServer) readyHandler(
 }
 
 // ReadyFunc is a function that will be called to determine if a service is
-// ready to recieve traffic. It should return a descriptive error that helps
+// ready to receive traffic. It should return a descriptive error that helps
 // with debugging if the underlying check fails.
 type ReadyFunc func(ctx context.Context) error
 
@@ -272,14 +272,14 @@ func (s *HealthServer) Close() error {
 func (s *HealthServer) ListenAndServe(ctx context.Context) error {
 	if s.server != nil {
 		return ListenAndServeContext(ctx, s.server, 5*time.Second)
-	} else {
-		<-ctx.Done()
 	}
+
+	<-ctx.Done()
 
 	return nil
 }
 
-// LivenessReadyCheck returns a ReadyFunc that verifies that an endpoint aswers
+// LivenessReadyCheck returns a ReadyFunc that verifies that an endpoint answers
 // to GET requests with 200 OK.
 func LivenessReadyCheck(endpoint string) ReadyFunc {
 	return func(ctx context.Context) error {

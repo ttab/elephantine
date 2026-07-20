@@ -15,6 +15,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// APIServerOption configures an APIServer when passed to NewAPIServer or
+// NewTestAPIServer.
 type APIServerOption func(s *APIServer)
 
 func APIServerCORSHosts(hosts ...string) APIServerOption {
@@ -68,6 +70,9 @@ func NewAPIServer(
 	)
 }
 
+// Cleaner is the subset of testing.TB used to register cleanup callbacks,
+// satisfied by *testing.T. NewTestAPIServer uses it to tear down the test
+// server when the test finishes.
 type Cleaner interface {
 	Cleanup(fn func())
 }
@@ -154,6 +159,10 @@ func newAPIServer(
 	return &s
 }
 
+// APIServer is a HTTP server for our APIs that bundles a request mux, a health
+// server, and CORS handling. Construct it with NewAPIServer (or
+// NewTestAPIServer for tests), register services with RegisterAPI(s), and
+// start it with ListenAndServe.
 type APIServer struct {
 	testServer bool
 
@@ -189,6 +198,9 @@ func (s *APIServer) AliveEndpoint() string {
 	)
 }
 
+// APIServiceHandler is implemented by the generated Twirp service handlers. It
+// is a http.Handler that also reports the path prefix the service should be
+// mounted on.
 type APIServiceHandler interface {
 	http.Handler
 
@@ -346,6 +358,10 @@ func NewDefaultServiceOptions(
 	return so, nil
 }
 
+// ServiceOptions carries the Twirp server hooks and authentication middleware
+// applied to the API services registered with an APIServer. Use
+// NewDefaultServiceOptions for the standard setup, or compose it manually with
+// the Add*/Set* methods, and apply it to a Twirp server with ServerOptions.
 type ServiceOptions struct {
 	Hooks          *twirp.ServerHooks
 	AuthMiddleware func(
@@ -412,15 +428,17 @@ func (so *ServiceOptions) SetAuthInfoValidation(
 			}
 
 			auth, err := parser.AuthInfoFromHeader(headers.Get("Authorization"))
-			if errors.Is(err, ErrNoAuthorization) {
+
+			switch {
+			case errors.Is(err, ErrNoAuthorization):
 				if requireAuth {
 					return ctx, twirp.Unauthenticated.Error(
 						"authentication required")
 				}
-			} else if err != nil {
+			case err != nil:
 				return ctx, twirp.PermissionDenied.Errorf(
 					"invalid authorization: %v", err)
-			} else if auth == nil {
+			case auth == nil:
 				return ctx, twirp.InternalError(
 					"invalid auth info parser response")
 			}
