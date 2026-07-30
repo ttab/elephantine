@@ -14,7 +14,7 @@ Shared functionality for Elephant systems. It's most likely not something anyone
 - **HTTP client** — configurable client with timeouts, connection limits, oauth2 token injection, and Prometheus instrumentation
 - **Graceful shutdown** — signal-based (SIGINT/SIGTERM) shutdown coordination
 - **Error groups** — panic-recovering error groups with retry and backoff support, restarts are counted in the `task_restarts_total` metric
-- **Prometheus helpers** — `MetricsHelper` for registering counters, gauges, and histograms, and `RegisterOrReuse` for metrics that are shared between components
+- **Prometheus helpers** — `MetricsHelper` for registering counters, gauges, and histograms, and `RegisterOrReuse` for metrics that are shared between components. Metric conventions for elephant services are documented in [docs/metrics.md](docs/metrics.md)
 - **Feature flags** — context-based feature flag propagation
 - **Vault** — HashiCorp Vault client with Kubernetes auth
 
