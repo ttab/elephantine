@@ -12,9 +12,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/ttab/elephantine"
 	"github.com/ttab/elephantine/pg/postgres"
 )
+
+// jobLockNameLabel is the metric label holding the job lock name.
+const jobLockNameLabel = "name"
 
 // JobLockState describes whether a job lock is held, lost, or released. It is
 // sent on the channel a JobLock uses to notify its holder of state changes.
@@ -44,6 +48,9 @@ type JobLockOptions struct {
 	// operations. Must be shorter than the ping interval. Defaults to half
 	// the ping interval.
 	Timeout time.Duration
+	// MetricsRegisterer is used to register the job lock metrics.
+	// Defaults to prometheus.DefaultRegisterer.
+	MetricsRegisterer prometheus.Registerer
 }
 
 // JobLock helps separate processes coordinate who should be performing a
@@ -63,6 +70,8 @@ type JobLock struct {
 	staleAfter    time.Duration
 	checkInterval time.Duration
 	timeout       time.Duration
+	held          prometheus.Gauge
+	transitions   *prometheus.CounterVec
 
 	once sync.Once
 }
@@ -100,6 +109,41 @@ func NewJobLock(
 			opts.Timeout, opts.PingInterval)
 	}
 
+	if opts.MetricsRegisterer == nil {
+		opts.MetricsRegisterer = prometheus.DefaultRegisterer
+	}
+
+	heldVec, err := elephantine.RegisterOrReuse(opts.MetricsRegisterer,
+		prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "pg_job_lock_held",
+			Help: "Whether this instance currently holds the " +
+				"named job lock.",
+		}, []string{jobLockNameLabel}))
+	if err != nil {
+		return nil, fmt.Errorf(
+			"register job lock held metric: %w", err)
+	}
+
+	transitionsVec, err := elephantine.RegisterOrReuse(
+		opts.MetricsRegisterer,
+		prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "pg_job_lock_transitions_total",
+			Help: "Job lock state transitions observed by this " +
+				"instance.",
+		}, []string{jobLockNameLabel, "state"}))
+	if err != nil {
+		return nil, fmt.Errorf(
+			"register job lock transitions metric: %w", err)
+	}
+
+	transitions, err := transitionsVec.CurryWith(prometheus.Labels{
+		jobLockNameLabel: name,
+	})
+	if err != nil {
+		return nil, fmt.Errorf(
+			"curry job lock transitions metric: %w", err)
+	}
+
 	id := uuid.New()
 
 	hostname, err := os.Hostname()
@@ -125,9 +169,24 @@ func NewJobLock(
 		out:           make(chan JobLockState, 1),
 		abort:         make(chan struct{}),
 		cleanedUp:     make(chan struct{}),
+		held:          heldVec.WithLabelValues(name),
+		transitions:   transitions,
 	}
 
+	jl.held.Set(0)
+
 	return &jl, nil
+}
+
+// observeState updates the job lock metrics on a state transition.
+func (jl *JobLock) observeState(state JobLockState) {
+	if state == JobLockStateHeld {
+		jl.held.Set(1)
+	} else {
+		jl.held.Set(0)
+	}
+
+	jl.transitions.WithLabelValues(string(state)).Inc()
 }
 
 func (jl *JobLock) Identity() string {
@@ -221,6 +280,8 @@ func (jl *JobLock) loop() {
 
 		if nextState != jl.state {
 			jl.state = nextState
+
+			jl.observeState(jl.state)
 
 			jl.logger.Debug("job lock state change",
 				elephantine.LogKeyState, jl.state)
@@ -364,6 +425,10 @@ func (jl *JobLock) release() {
 	if jl.state != JobLockStateHeld {
 		return
 	}
+
+	// We stop holding the lock regardless of whether the release
+	// call succeeds.
+	jl.observeState(JobLockStateReleased)
 
 	jl.logger.Debug("releasing job lock")
 

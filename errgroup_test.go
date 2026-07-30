@@ -5,9 +5,12 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/ttab/elephantine"
 )
 
@@ -168,5 +171,44 @@ func TestErrGroupGoDoesNotCancelOnCleanReturn(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Wait did not return after sibling completed")
+	}
+}
+
+// TestErrGroupRestartMetric verifies that GoWithRetries counts task restarts
+// in the task_restarts_total metric.
+func TestErrGroupRestartMetric(t *testing.T) {
+	reg := prometheus.NewRegistry()
+
+	grp := elephantine.NewErrGroup(context.Background(), discardLogger(),
+		elephantine.WithErrGroupMetricsRegisterer(reg))
+
+	var runs int
+
+	grp.GoWithRetries("flaky", 5,
+		elephantine.StaticBackoff(time.Millisecond), time.Minute,
+		func(_ context.Context) error {
+			runs++
+
+			if runs < 3 {
+				return errors.New("transient failure")
+			}
+
+			return nil
+		})
+
+	err := grp.Wait()
+	if err != nil {
+		t.Fatalf("expected nil error from Wait, got: %v", err)
+	}
+
+	expected := strings.NewReader(`
+# HELP task_restarts_total Times a task has been restarted after a failure.
+# TYPE task_restarts_total counter
+task_restarts_total{task="flaky"} 2
+`)
+
+	err = testutil.GatherAndCompare(reg, expected, "task_restarts_total")
+	if err != nil {
+		t.Fatalf("unexpected metric state: %v", err)
 	}
 }

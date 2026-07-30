@@ -13,8 +13,8 @@ Shared functionality for Elephant systems. It's most likely not something anyone
 - **Twirp RPC** — logging hooks, Prometheus metrics, and auth middleware for Twirp services
 - **HTTP client** — configurable client with timeouts, connection limits, oauth2 token injection, and Prometheus instrumentation
 - **Graceful shutdown** — signal-based (SIGINT/SIGTERM) shutdown coordination
-- **Error groups** — panic-recovering error groups with retry and backoff support
-- **Prometheus helpers** — `MetricsHelper` for registering counters, gauges, and histograms
+- **Error groups** — panic-recovering error groups with retry and backoff support, restarts are counted in the `task_restarts_total` metric
+- **Prometheus helpers** — `MetricsHelper` for registering counters, gauges, and histograms, and `RegisterOrReuse` for metrics that are shared between components
 - **Feature flags** — context-based feature flag propagation
 - **Vault** — HashiCorp Vault client with Kubernetes auth
 
@@ -22,8 +22,9 @@ Shared functionality for Elephant systems. It's most likely not something anyone
 
 - Type conversion helpers for `pgtype` (`Text`, `Int32`, `UUID`, `Time`, and nullable pointer variants)
 - Transaction helpers (`WithTX`, `Rollback`)
-- Distributed job locking via database rows
+- Distributed job locking via database rows, instrumented with the `pg_job_lock_held` and `pg_job_lock_transitions_total` metrics
 - NOTIFY/LISTEN pub/sub with ping-based health checking, reconnection, and generic fan-out
+- `PoolStatCollector` for exposing `pgxpool` connection pool statistics (saturation, acquire waits, connection churn) as Prometheus metrics
 - Auto-generated query code via [sqlc](https://sqlc.dev/)
 
 ### `test/` — Test utilities

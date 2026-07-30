@@ -1,6 +1,7 @@
 package elephantine
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -18,6 +19,37 @@ const (
 	customerLabel = "customer"
 	statusLabel   = "status"
 )
+
+// RegisterOrReuse registers the collector with the registerer. If a collector
+// with an identical descriptor set already has been registered, that collector
+// is returned instead. This allows shared metric vectors to be declared by
+// every component that uses them, instead of requiring coordination around a
+// single registration point.
+func RegisterOrReuse[C prometheus.Collector](
+	reg prometheus.Registerer, c C,
+) (C, error) {
+	var zero C
+
+	err := reg.Register(c)
+
+	var are prometheus.AlreadyRegisteredError
+
+	switch {
+	case errors.As(err, &are):
+		existing, ok := are.ExistingCollector.(C)
+		if !ok {
+			return zero, fmt.Errorf(
+				"existing collector %T does not match %T",
+				are.ExistingCollector, c)
+		}
+
+		return existing, nil
+	case err != nil:
+		return zero, fmt.Errorf("register collector: %w", err)
+	}
+
+	return c, nil
+}
 
 func NewMetricsHelper(reg prometheus.Registerer) *MetricsHelper {
 	return &MetricsHelper{
@@ -139,6 +171,19 @@ func (h *MetricsHelper) Histogram(
 	}
 
 	*o = hist
+}
+
+// Collector registers a custom collector. The name is only used for error
+// reporting.
+func (h *MetricsHelper) Collector(name string, c prometheus.Collector) {
+	if h.err != nil {
+		return
+	}
+
+	err := h.reg.Register(c)
+	if err != nil {
+		h.err = fmt.Errorf("register %q collector: %w", name, err)
+	}
 }
 
 func (h *MetricsHelper) HistogramVec(

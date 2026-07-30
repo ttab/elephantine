@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -23,7 +24,47 @@ var ErrTaskDisabled = errors.New("task disabled")
 // implementation.
 type BackoffFunction func(retry int) time.Duration
 
-func NewErrGroup(ctx context.Context, logger *slog.Logger) *ErrGroup {
+// ErrGroupOption customises the behaviour of an ErrGroup.
+type ErrGroupOption func(o *errGroupOptions)
+
+type errGroupOptions struct {
+	reg prometheus.Registerer
+}
+
+// WithErrGroupMetricsRegisterer overrides the registerer used for the task
+// metrics. Defaults to prometheus.DefaultRegisterer.
+func WithErrGroupMetricsRegisterer(reg prometheus.Registerer) ErrGroupOption {
+	return func(o *errGroupOptions) {
+		o.reg = reg
+	}
+}
+
+func NewErrGroup(
+	ctx context.Context, logger *slog.Logger, opts ...ErrGroupOption,
+) *ErrGroup {
+	o := errGroupOptions{
+		reg: prometheus.DefaultRegisterer,
+	}
+
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	restarts := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "task_restarts_total",
+		Help: "Times a task has been restarted after a failure.",
+	}, []string{"task"})
+
+	registered, err := RegisterOrReuse(o.reg, restarts)
+	if err != nil {
+		// Fall back to the unregistered vector rather than failing
+		// group creation over a metrics conflict.
+		logger.Error("failed to register task restart metric",
+			LogKeyError, err.Error())
+	} else {
+		restarts = registered
+	}
+
 	// Derive our own cancellation before handing the context to the
 	// errgroup, so that the group context tasks observe is cancelled both
 	// by the errgroup (on a task error) and by us (when a Required() task
@@ -33,10 +74,11 @@ func NewErrGroup(ctx context.Context, logger *slog.Logger) *ErrGroup {
 	grp, gCtx := errgroup.WithContext(ctx)
 
 	eg := ErrGroup{
-		logger: logger,
-		grp:    grp,
-		gCtx:   gCtx,
-		cancel: cancel,
+		logger:   logger,
+		grp:      grp,
+		gCtx:     gCtx,
+		cancel:   cancel,
+		restarts: restarts,
 	}
 
 	return &eg
@@ -45,10 +87,11 @@ func NewErrGroup(ctx context.Context, logger *slog.Logger) *ErrGroup {
 // ErrGroup is meant to be used when we run "top level" subsystems in a
 // service. If a task panics it will be handled as a ErrPanicRecovered error.
 type ErrGroup struct {
-	logger *slog.Logger
-	grp    *errgroup.Group
-	gCtx   context.Context
-	cancel context.CancelFunc
+	logger   *slog.Logger
+	grp      *errgroup.Group
+	gCtx     context.Context
+	cancel   context.CancelFunc
+	restarts *prometheus.CounterVec
 }
 
 func (eg *ErrGroup) Go(task string, fn func(ctx context.Context) error) {
@@ -127,6 +170,10 @@ func (eg *ErrGroup) GoWithRetries(
 	eg.grp.Go(func() error {
 		var tries int
 
+		// Initialise the restart series at zero so that increases can
+		// be detected even for a task's first restart.
+		restarts := eg.restarts.WithLabelValues(task)
+
 		// Count starting as a state change.
 		lastStateChange := time.Now()
 
@@ -158,6 +205,8 @@ func (eg *ErrGroup) GoWithRetries(
 			}
 
 			wait := backoff(tries)
+
+			restarts.Inc()
 
 			eg.logger.ErrorContext(eg.gCtx,
 				"task failure, restarting",
