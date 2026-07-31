@@ -1,9 +1,8 @@
 # Metric conventions for elephant services
 
-These are the conventions for Prometheus metrics in elephant services. They
-are distilled from elephant-hub, elephant-assets, elephant-live, and
-elephant-distribution; new instrumentation should follow them, and existing
-metrics in pre-production services should be brought in line when touched.
+These are the conventions for Prometheus metrics in elephant services. New
+instrumentation should follow them, and existing metrics in pre-production
+services should be brought in line when touched.
 
 **Production services are the exception: renaming a metric or changing its
 labels breaks dashboards, alerts, and recording rules. There, adding metrics
