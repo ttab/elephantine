@@ -210,6 +210,10 @@ func (jl *JobLock) run() {
 // RunWithContext runs the provided function once the job lock has been
 // acquired. The context provided to the function will be cancelled if the job
 // lock is lost.
+//
+// The function is run at most once: when it returns the lock is released,
+// and the JobLock cannot be reused. Use RunInJobLock for supervised
+// restarts.
 func (jl *JobLock) RunWithContext(
 	ctx context.Context,
 	fn func(ctx context.Context) error,
