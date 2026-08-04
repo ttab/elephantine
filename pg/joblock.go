@@ -60,6 +60,7 @@ type JobLock struct {
 	db            *pgxpool.Pool
 	state         JobLockState
 	lastPing      time.Time
+	lastAttempt   time.Time
 	out           chan JobLockState
 	abort         chan struct{}
 	cleanedUp     chan struct{}
@@ -308,7 +309,7 @@ func (jl *JobLock) loop() {
 		case JobLockStateLost:
 			return
 		case JobLockStateHeld:
-			wait = time.After(time.Until(jl.lastPing.Add(jl.pingInterval)))
+			wait = time.After(jl.nextPingWait())
 		default:
 			wait = time.After(jl.checkInterval)
 		}
@@ -459,7 +460,24 @@ func (jl *JobLock) release() {
 	}
 }
 
+// nextPingWait returns how long to wait before the next ping attempt. Pings
+// are paced from the last attempt, not the last success: lastPing only
+// advances on successful pings, since staleness is measured from it, so a
+// wait computed from lastPing alone goes negative as soon as a ping fails
+// and turns the retries into a busy-loop for the rest of the stale window.
+func (jl *JobLock) nextPingWait() time.Duration {
+	since := jl.lastPing
+
+	if jl.lastAttempt.After(since) {
+		since = jl.lastAttempt
+	}
+
+	return time.Until(since.Add(jl.pingInterval))
+}
+
 func (jl *JobLock) ping() JobLockState {
+	jl.lastAttempt = time.Now()
+
 	ctx, cancel := context.WithTimeout(context.Background(), jl.timeout)
 	defer cancel()
 
