@@ -79,8 +79,9 @@ Every service should have:
    primary pool; additional pools are named for their role (e.g.
    `"pubsub"`).
 2. **Job locks** — every `pg.NewJobLock`/`pg.RunInJobLock` call passes
-   `MetricsRegisterer` so `pg_job_lock_held` and
-   `pg_job_lock_transitions_total` land on the service registry.
+   `MetricsRegisterer` so `pg_job_lock_held`,
+   `pg_job_lock_transitions_total`, and `pg_job_lock_restarts_total` land
+   on the service registry.
 3. **Outbound HTTP** — one `elephantine.NewHTTPClientIntrumentation` per
    binary, and every outbound client instrumented under its own name
    (`repository`, `assets`, `s3`, `oidc`, `jwks`, ...), one name per
@@ -92,6 +93,17 @@ Every service should have:
 5. **Task groups** — top-level subsystems run under
    `elephantine.NewErrGroup` so panics are recovered and restarts are
    counted in `task_restarts_total`.
+
+## Job lock alerting
+
+`pg_job_lock_restarts_total{name}` counts restarts of a
+`pg.RunInJobLock`-supervised function after an error return. Restart
+pacing keeps a failing worker from hammering the shared database, but it
+does not make the worker healthy — alert on a sustained non-zero
+`rate(pg_job_lock_restarts_total[5m])`.
+`rate(pg_job_lock_transitions_total[5m])` is the indirect signal for the
+same condition (lock churn) and additionally catches a lock ping-ponging
+between replicas.
 
 ## Enforcement
 
