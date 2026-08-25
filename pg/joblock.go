@@ -51,6 +51,17 @@ type JobLockOptions struct {
 	// MetricsRegisterer is used to register the job lock metrics.
 	// Defaults to prometheus.DefaultRegisterer.
 	MetricsRegisterer prometheus.Registerer
+	// MaxConsecutiveFailures is the number of consecutive failed runs
+	// RunInJobLock tolerates before it gives up and returns an error
+	// instead of restarting the function. Zero, the default, means that
+	// it keeps restarting forever. Only used by RunInJobLock.
+	MaxConsecutiveFailures int
+	// HealthyRuntime is how long a run must last to count as a success
+	// for the purposes of MaxConsecutiveFailures. A run that returns
+	// earlier than this counts as a failure regardless of how much work
+	// it did, so that failures that accrue slowly still reach the limit.
+	// Defaults to five minutes. Only used by RunInJobLock.
+	HealthyRuntime time.Duration
 }
 
 // JobLock helps separate processes coordinate who should be performing a

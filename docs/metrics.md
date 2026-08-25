@@ -105,6 +105,14 @@ does not make the worker healthy — alert on a sustained non-zero
 same condition (lock churn) and additionally catches a lock ping-ponging
 between replicas.
 
+A job that must not fail indefinitely should also set
+`JobLockOptions.MaxConsecutiveFailures`, so that a run of failures none of
+which lasted `HealthyRuntime` (five minutes by default) makes
+`RunInJobLock` return an error rather than restart forever. That surfaces as
+a task failure in the supervising `elephantine.ErrGroup` — `task_restarts_total`
+or, for a `Required` task, service shutdown — instead of only as a restart
+rate to notice.
+
 ## Enforcement
 
 Each service has a metrics test that:
