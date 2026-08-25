@@ -48,6 +48,12 @@ linters:
       keywords:
         - FIXME
         - BUG
+    modernize:
+      disable:
+        # embedlit suggests eliding the type of an embedded field in a
+        # struct literal, which the Go 1.27 compiler rejects with "missing
+        # type in composite literal".
+        - embedlit
     nestif:
       min-complexity: 6
     wrapcheck:
