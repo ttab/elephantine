@@ -79,16 +79,20 @@ func TestAPIServerVersionEndpoint(t *testing.T) {
 		info.Modules["github.com/ttab/elephantine"],
 		"elephantine module version tracks the application version")
 
-	// client_golang is a real dependency of the binary, so an explicitly
-	// requested module that is part of the build is reported with the
-	// version it was built with.
-	if v := info.Modules["github.com/prometheus/client_golang"]; v == "" {
-		t.Error("expected a version for the requested client_golang module")
+	// Whether the test binary carries dependency versions at all differs
+	// between Go toolchains, so client_golang may or may not be reported
+	// here. Either is correct; reporting it with an empty version is not.
+	// TestBuildInfoFrom covers the mapping itself against known build
+	// information.
+	for m, v := range info.Modules {
+		if v == "" {
+			t.Errorf("module %q reported with an empty version", m)
+		}
 	}
 
 	// The elephant API modules aren't dependencies of elephantine, so they
-	// are skipped rather than reported as "unknown" even though they are
-	// part of the default module list.
+	// can never be part of this build and are skipped rather than reported
+	// as "unknown", even though they are in the default module list.
 	for _, m := range []string{
 		"github.com/ttab/elephant-api",
 		"github.com/ttab/elephant-tt-api",

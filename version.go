@@ -35,12 +35,26 @@ var defaultVersionModules = []string{
 }
 
 func buildBuildInfo(appVersion string, modules []string) BuildInfo {
+	// ReadBuildInfo returns nil build information when the binary was
+	// built without module support.
+	info, _ := debug.ReadBuildInfo()
+
+	return buildInfoFrom(info, appVersion, modules)
+}
+
+// buildInfoFrom maps a debug.BuildInfo, or nil when the runtime has none, to
+// the payload served by the /version endpoint. The ambient read lives in
+// buildBuildInfo so that this mapping can be tested against known build
+// information: whether a test binary carries dependency information at all
+// differs between Go toolchains.
+func buildInfoFrom(
+	info *debug.BuildInfo, appVersion string, modules []string,
+) BuildInfo {
 	out := BuildInfo{
 		Modules: make(map[string]string, len(modules)),
 	}
 
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
+	if info == nil {
 		out.Application.Version = resolveAppVersion(appVersion, "")
 
 		return out
