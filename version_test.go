@@ -79,12 +79,19 @@ func TestAPIServerVersionEndpoint(t *testing.T) {
 		info.Modules["github.com/ttab/elephantine"],
 		"elephantine module version tracks the application version")
 
-	// Under `go test` debug.BuildInfo.Deps is empty, so modules that aren't
-	// part of the build are skipped rather than reported as "unknown".
+	// client_golang is a real dependency of the binary, so an explicitly
+	// requested module that is part of the build is reported with the
+	// version it was built with.
+	if v := info.Modules["github.com/prometheus/client_golang"]; v == "" {
+		t.Error("expected a version for the requested client_golang module")
+	}
+
+	// The elephant API modules aren't dependencies of elephantine, so they
+	// are skipped rather than reported as "unknown" even though they are
+	// part of the default module list.
 	for _, m := range []string{
 		"github.com/ttab/elephant-api",
 		"github.com/ttab/elephant-tt-api",
-		"github.com/prometheus/client_golang",
 	} {
 		if v, ok := info.Modules[m]; ok {
 			t.Errorf("module %q unexpectedly present: %q", m, v)
