@@ -25,7 +25,7 @@ func TestBuildInfoFrom(t *testing.T) {
 	info := &debug.BuildInfo{
 		Main: debug.Module{
 			Path:    mainModule,
-			Version: "(devel)",
+			Version: develMainVersion,
 		},
 		Deps: []*debug.Module{
 			{
@@ -118,7 +118,7 @@ func TestBuildInfoFromDevelMainVersion(t *testing.T) {
 	info := &debug.BuildInfo{
 		Main: debug.Module{
 			Path:    mainModule,
-			Version: "(devel)",
+			Version: develMainVersion,
 		},
 	}
 

@@ -26,6 +26,10 @@ type ApplicationInfo struct {
 // has stamped a real version into the binary.
 const devVersion = "v0.0.0-dev"
 
+// develMainVersion is the main module version the toolchain stamps into a
+// binary that wasn't built from a tagged module version.
+const develMainVersion = "(devel)"
+
 // defaultVersionModules is the baseline set of modules whose versions are
 // reported by /version. APIServerModules appends to this list.
 var defaultVersionModules = []string{
@@ -112,7 +116,7 @@ func resolveAppVersion(explicit string, mainVersion string) string {
 		return explicit
 	}
 
-	if mainVersion != "" && mainVersion != "(devel)" {
+	if mainVersion != "" && mainVersion != develMainVersion {
 		return mainVersion
 	}
 
