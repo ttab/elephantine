@@ -26,6 +26,10 @@ type ApplicationInfo struct {
 // has stamped a real version into the binary.
 const devVersion = "v0.0.0-dev"
 
+// develMainVersion is the main module version the toolchain stamps into a
+// binary that wasn't built from a tagged module version.
+const develMainVersion = "(devel)"
+
 // defaultVersionModules is the baseline set of modules whose versions are
 // reported by /version. APIServerModules appends to this list.
 var defaultVersionModules = []string{
@@ -35,12 +39,26 @@ var defaultVersionModules = []string{
 }
 
 func buildBuildInfo(appVersion string, modules []string) BuildInfo {
+	// ReadBuildInfo returns nil build information when the binary was
+	// built without module support.
+	info, _ := debug.ReadBuildInfo()
+
+	return buildInfoFrom(info, appVersion, modules)
+}
+
+// buildInfoFrom maps a debug.BuildInfo, or nil when the runtime has none, to
+// the payload served by the /version endpoint. The ambient read lives in
+// buildBuildInfo so that this mapping can be tested against known build
+// information: whether a test binary carries dependency information at all
+// differs between Go toolchains.
+func buildInfoFrom(
+	info *debug.BuildInfo, appVersion string, modules []string,
+) BuildInfo {
 	out := BuildInfo{
 		Modules: make(map[string]string, len(modules)),
 	}
 
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
+	if info == nil {
 		out.Application.Version = resolveAppVersion(appVersion, "")
 
 		return out
@@ -98,7 +116,7 @@ func resolveAppVersion(explicit string, mainVersion string) string {
 		return explicit
 	}
 
-	if mainVersion != "" && mainVersion != "(devel)" {
+	if mainVersion != "" && mainVersion != develMainVersion {
 		return mainVersion
 	}
 

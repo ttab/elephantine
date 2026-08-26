@@ -31,9 +31,8 @@ func IsTwirpErrorCode(err error, code twirp.ErrorCode) bool {
 		return false
 	}
 
-	var te twirp.Error
-
-	if errors.As(err, &te) {
+	te, ok := errors.AsType[twirp.Error](err)
+	if ok {
 		return te.Code() == code
 	}
 
@@ -48,9 +47,8 @@ func TwirpErrorToHTTPStatusCode(err error) int {
 		return http.StatusOK
 	}
 
-	var te twirp.Error
-
-	if errors.As(err, &te) {
+	te, ok := errors.AsType[twirp.Error](err)
+	if ok {
 		return twirp.ServerHTTPStatusFromErrorCode(te.Code())
 	}
 
