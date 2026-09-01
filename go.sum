@@ -95,10 +95,8 @@ github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UV
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-github.com/ttab/mage v0.11.0 h1:rahDg58YCXuzHYJB7cTUPL2QNR9u21ousLhxrfRmRfg=
-github.com/ttab/mage v0.11.0/go.mod h1:F7p66SpOrWvdxv4N/77q6Mvp/DjFEqVJIFgecwJ5njE=
-github.com/ttab/mage v0.11.1 h1:jHWYk/5biXcvEDvzd4XxYKM3HF3oENlrNlJz1KB6gus=
-github.com/ttab/mage v0.11.1/go.mod h1:F7p66SpOrWvdxv4N/77q6Mvp/DjFEqVJIFgecwJ5njE=
+github.com/ttab/mage v0.11.2 h1:o/Vdsun1EqFV2sfzg1TVXQ7YC7V4meYGcPe/0ZV2LXw=
+github.com/ttab/mage v0.11.2/go.mod h1:F7p66SpOrWvdxv4N/77q6Mvp/DjFEqVJIFgecwJ5njE=
 github.com/twitchtv/twirp v8.1.3+incompatible h1:+F4TdErPgSUbMZMwp13Q/KgDVuI7HJXP61mNV3/7iuU=
 github.com/twitchtv/twirp v8.1.3+incompatible/go.mod h1:RRJoFSAmTEh2weEqWtpPE3vFK5YBhA6bqp2l1kfCC5A=
 github.com/urfave/cli/v3 v3.10.1 h1:7Kx9H50hrHbRbyxgO1KP6/BcbiGRz0uYh5YyQ30JEEY=
