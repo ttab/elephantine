@@ -16,7 +16,7 @@ require (
 	github.com/ryanuber/go-glob v1.0.0
 	github.com/ttab/mage v0.11.2
 	github.com/twitchtv/twirp v8.1.3+incompatible
-	github.com/urfave/cli/v3 v3.10.1
+	github.com/urfave/cli/v3 v3.11.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.22.0
 	google.golang.org/protobuf v1.36.11
