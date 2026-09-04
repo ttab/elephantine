@@ -4,7 +4,7 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
-## [v0.28.0] - Unreleased
+## [v0.28.0] - 2026-09-04
 
 **Behaviour change (request bodies):** `APIServer` now caps request bodies at
 `DefaultMaxBodyBytes` (8 MiB) on both the plain and the TLS listener. A request
