@@ -1,4 +1,4 @@
-package pg_test
+package joblock_test
 
 import (
 	"testing"
@@ -7,10 +7,10 @@ import (
 )
 
 // TestSchemaMatchesTheMigrations keeps the two copies of this package's DDL in
-// step. The migrations in pg/schema are the source: they are what a consuming
+// step. The migrations in schema/ are the source: they are what a consuming
 // service vendors into its own ./schema, because neither `mage sql:migrate`
 // nor elephant-platform's `setup db migrate` looks inside a dependency for a
-// migration. pg/schema.sql is what sqlc reads, and it is generated from them.
+// migration. schema.sql is what sqlc reads, and it is generated from them.
 //
 // Without this test the library holds the same DDL twice with nothing keeping
 // the copies together, which is exactly the drift that made hand-copying
@@ -18,6 +18,6 @@ import (
 func TestSchemaMatchesTheMigrations(t *testing.T) {
 	err := libschema.CheckFlattened("schema", "schema.sql")
 	if err != nil {
-		t.Fatalf("run `mage sql:librarySchema pg/schema pg/schema.sql`: %v", err)
+		t.Fatalf("run `mage sql:librarySchema pg/joblock/schema pg/joblock/schema.sql`: %v", err)
 	}
 }

@@ -30,9 +30,3 @@ WHERE name = @name
 DELETE FROM job_lock
 WHERE name = @name
       AND holder = @holder;
-
--- name: AcquireTXLock :exec
-SELECT pg_advisory_xact_lock(@id::bigint);
-
--- name: Notify :exec
-SELECT pg_notify(@channel::text, @message::text);

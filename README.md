@@ -22,10 +22,13 @@ Shared functionality for Elephant systems. It's most likely not something anyone
 
 - Type conversion helpers for `pgtype` (`Text`, `Int32`, `UUID`, `Time`, and nullable pointer variants)
 - Transaction helpers (`WithTX`, `Rollback`)
-- Distributed job locking via database rows, instrumented with the `pg_job_lock_held` and `pg_job_lock_transitions_total` metrics
 - NOTIFY/LISTEN pub/sub with ping-based health checking, reconnection, and generic fan-out
 - `PoolStatCollector` for exposing `pgxpool` connection pool statistics (saturation, acquire waits, connection churn) as Prometheus metrics
-- Auto-generated query code via [sqlc](https://sqlc.dev/)
+
+### `pg/joblock/` — Job locks
+
+- Distributed job locking via a `job_lock` table row, instrumented with the `pg_job_lock_held`, `pg_job_lock_transitions_total` and `pg_job_lock_restarts_total` metrics. `joblock.Run` supervises a worker that must run on one instance at a time; see [docs/joblock-restart-semantics.md](docs/joblock-restart-semantics.md)
+- The table is created by the tern migration in `pg/joblock/schema`, which a service vendors into its own `./schema` (see below). `pg/joblock/schema.sql` is generated from it for sqlc and must not be edited
 
 ### `test/` — Test utilities
 
@@ -143,3 +146,44 @@ The workflow already triggers on `v*` tags, so `github.ref_name` is the tag (`v1
 If `APIServerVersion` is not set, or if the binary is built locally without the ldflag, the endpoint reports `v0.0.0-dev`.
 
 VCS revision, timestamp, and dirty state are stamped automatically by the Go toolchain (`-buildvcs=auto`, default) as long as `.git` is present in the build context — which it is with the standard `ADD . ./` step. Dependency versions come from the build graph with no extra flags.
+
+## Vendoring the job lock migration
+
+Neither `mage sql:migrate` nor elephant-platform's `setup db migrate` looks
+inside a dependency for a migration, so a service that uses `pg/joblock` has to
+carry the `job_lock` table in its own `./schema`. Declare the library once and
+let mage copy the migration in:
+
+```shell
+mage sql:vendorAdd github.com/ttab/elephantine pg/joblock/schema
+mage sql:vendor
+mage sql:migrate
+```
+
+`mage sql:vendorCheck` fails when elephantine ships a migration the service has
+not vendored yet, so wire it into lint or a test. A service that created the
+table by hand before the migration existed asserts that in the migration that
+did the work instead of vendoring:
+
+```sql
+-- covers: github.com/ttab/elephantine pg/joblock/schema/001_job_lock.sql
+```
+
+Each feature that needs a table of its own gets its own schema directory under
+its package, so a service only ever vendors the migrations for the features it
+uses. The path is part of the contract: a service that vendored the job lock
+from the old `pg/schema` location updates the `dir` in `schema/vendor.json` and
+the `-- vendored-from:` or `-- covers:` line in its migration to
+`pg/joblock/schema/001_job_lock.sql`. The file itself is unchanged, so its
+checksum and applied state are unaffected.
+
+Adding a migration to the library:
+
+```shell
+mage sql:librarySchema pg/joblock/schema pg/joblock/schema.sql
+mage sql:generate
+```
+
+The first regenerates the flat schema sqlc reads, the second the query code in
+`pg/joblock/internal/postgres`. `pg/joblock/schema_test.go` fails if the flat
+schema is left behind.

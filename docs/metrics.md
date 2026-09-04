@@ -63,7 +63,7 @@ The application package takes a `prometheus.Registerer` parameter; only
 `main` chooses `prometheus.DefaultRegisterer`. Everything downstream uses
 the injected registerer:
 
-- job locks via `pg.JobLockOptions{MetricsRegisterer: ...}`
+- job locks via `joblock.Options{MetricsRegisterer: ...}`
 - Twirp hooks via `elephantine.WithTwirpMetricsRegisterer(...)`
 - error groups via `elephantine.WithErrGroupMetricsRegisterer(...)`
 - FanOut recovery via the shared `MetricsHelper`
@@ -78,7 +78,7 @@ Every service should have:
 1. **Connection pools** — `pg.NewPoolStatCollector(pool, "main")` for the
    primary pool; additional pools are named for their role (e.g.
    `"pubsub"`).
-2. **Job locks** — every `pg.NewJobLock`/`pg.RunInJobLock` call passes
+2. **Job locks** — every `joblock.New`/`joblock.Run` call passes
    `MetricsRegisterer` so `pg_job_lock_held`,
    `pg_job_lock_transitions_total`, and `pg_job_lock_restarts_total` land
    on the service registry.
@@ -97,7 +97,7 @@ Every service should have:
 ## Job lock alerting
 
 `pg_job_lock_restarts_total{name}` counts restarts of a
-`pg.RunInJobLock`-supervised function after an error return. Restart
+`joblock.Run`-supervised function after an error return. Restart
 pacing keeps a failing worker from hammering the shared database, but it
 does not make the worker healthy — alert on a sustained non-zero
 `rate(pg_job_lock_restarts_total[5m])`.
@@ -106,9 +106,9 @@ same condition (lock churn) and additionally catches a lock ping-ponging
 between replicas.
 
 A job that must not fail indefinitely should also set
-`JobLockOptions.MaxConsecutiveFailures`, so that a run of failures none of
+`joblock.Options.MaxConsecutiveFailures`, so that a run of failures none of
 which lasted `HealthyRuntime` (five minutes by default) makes
-`RunInJobLock` return an error rather than restart forever. That surfaces as
+`joblock.Run` return an error rather than restart forever. That surfaces as
 a task failure in the supervising `elephantine.ErrGroup` — `task_restarts_total`
 or, for a `Required` task, service shutdown — instead of only as a restart
 rate to notice.

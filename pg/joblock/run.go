@@ -1,4 +1,4 @@
-package pg
+package joblock
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 
 const (
 	// restartMinRuntime is the minimum time between two starts of the
-	// function run by RunInJobLock. A run that returns faster than this is
+	// function Run supervises. A run that returns faster than this is
 	// padded out to it before the lock is re-acquired, and a run that
 	// lasts at least this long is considered healthy and resets the error
 	// backoff.
@@ -25,11 +25,11 @@ const (
 	restartBackoffFloor = 1 * time.Second
 	restartBackoffCeil  = 60 * time.Second
 	// defaultHealthyRuntime is the default runtime a run must reach to
-	// count as a success for JobLockOptions.MaxConsecutiveFailures.
+	// count as a success for Options.MaxConsecutiveFailures.
 	defaultHealthyRuntime = 5 * time.Minute
 )
 
-// restartPacer decides how long RunInJobLock should wait before restarting
+// restartPacer decides how long Run should wait before restarting
 // the guarded function, and when to stop restarting it altogether.
 type restartPacer struct {
 	// healthyRuntime is the runtime a run must reach to count as a
@@ -97,12 +97,12 @@ func isLockLoss(err error) bool {
 		errors.Is(err, context.DeadlineExceeded)
 }
 
-// RunInJobLock runs fn under the named job lock, restarting it until the
+// Run runs fn under the named job lock, restarting it until the
 // context is cancelled.
 //
 // The function is expected to block until its context is cancelled: the
 // context it receives is tied to the held lock, and returning — with or
-// without an error — releases the lock, after which RunInJobLock re-acquires
+// without an error — releases the lock, after which Run re-acquires
 // it and starts the function again. This is not a way to run something
 // exactly once.
 //
@@ -116,19 +116,19 @@ func isLockLoss(err error) bool {
 // the lock stays released, so another instance can take over.
 //
 // Restarts are not necessarily unlimited. If
-// JobLockOptions.MaxConsecutiveFailures is set, RunInJobLock gives up and
+// Options.MaxConsecutiveFailures is set, Run gives up and
 // returns an error once that many runs have failed in a row without any of
-// them lasting JobLockOptions.HealthyRuntime (five minutes by default). Since
+// them lasting Options.HealthyRuntime (five minutes by default). Since
 // only a run of that length clears the count, a job that fails fast reaches
 // the limit however long it takes to get there, rather than accruing failures
 // forever. A run cut short by the loss of the lock is not a failure.
-func RunInJobLock(
+func Run(
 	ctx context.Context,
 	db *pgxpool.Pool,
 	logger *slog.Logger,
 	serviceName string,
 	lockName string,
-	options JobLockOptions,
+	options Options,
 	fn func(ctx context.Context) error,
 ) error {
 	reg := options.MetricsRegisterer
@@ -161,7 +161,7 @@ func RunInJobLock(
 	}
 
 	for {
-		lock, err := NewJobLock(db, logger, lockName, options)
+		lock, err := New(db, logger, lockName, options)
 		if err != nil {
 			return fmt.Errorf("create job lock: %w", err)
 		}

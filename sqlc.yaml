@@ -1,11 +1,11 @@
 version: "2"
 sql:
-- schema: "pg/schema.sql"
-  queries: "pg/queries.sql"
+- schema: "pg/joblock/schema.sql"
+  queries: "pg/joblock/queries.sql"
   engine: "postgresql"
   gen:
     go:
-      out: "pg/postgres"
+      out: "pg/joblock/internal/postgres"
       sql_package: "pgx/v5"
       rename:
         uuid: UUID

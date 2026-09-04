@@ -1,4 +1,4 @@
-package pg
+package joblock
 
 import (
 	"testing"
@@ -11,7 +11,7 @@ import (
 func TestNextPingWaitPacesFailedPings(t *testing.T) {
 	interval := 10 * time.Second
 
-	jl := JobLock{
+	jl := Lock{
 		pingInterval: interval,
 		// Last successful ping long overdue, as during a database
 		// outage.
@@ -33,7 +33,7 @@ func TestNextPingWaitPacesFailedPings(t *testing.T) {
 func TestNextPingWaitHealthy(t *testing.T) {
 	interval := 10 * time.Second
 
-	jl := JobLock{
+	jl := Lock{
 		pingInterval: interval,
 		lastPing:     time.Now(),
 	}

@@ -1,15 +1,15 @@
 # Job lock restart semantics
 
-`pg.RunInJobLock` runs a function on one instance at a time, supervising it
+`joblock.Run` runs a function on one instance at a time, supervising it
 for the lifetime of the process. It is the entry point for a background
 worker that must not run concurrently in a multi-replica deployment: an
 eventlog follower, an indexer, a pruner, a scheduler.
 
 ```go
-err := pg.RunInJobLock(ctx, db, logger,
+err := joblock.Run(ctx, db, logger,
 	"indexer",  // service name, used in log messages
 	"indexer",  // lock name, shared by every instance and used as a metric label
-	pg.JobLockOptions{
+	joblock.Options{
 		MetricsRegisterer:      reg,
 		MaxConsecutiveFailures: 10,
 	},
@@ -23,15 +23,15 @@ err := pg.RunInJobLock(ctx, db, logger,
 The function is expected to **block until its context is cancelled**. The
 context it receives is tied to the held lock, so it is cancelled when the
 lock is lost, and returning — with or without an error — releases the lock.
-`RunInJobLock` then re-acquires the lock and starts the function again, until
+`joblock.Run` then re-acquires the lock and starts the function again, until
 the outer context is cancelled or the failure limit is reached.
 
 This is not a way to run something exactly once. A function that finishes its
 work and returns nil is restarted, the same as one that fails; there is no
 "success" return.
 
-Under the hood `JobLock.RunWithContext` is one-shot — it acquires the lock,
-runs the function once, and releases the lock on return — and `RunInJobLock`
+Under the hood `joblock.Lock.RunWithContext` is one-shot — it acquires the lock,
+runs the function once, and releases the lock on return — and `joblock.Run`
 is the loop around it that constructs a fresh lock per iteration. Since an
 instance that returns has just deleted its own `job_lock` row, re-acquisition
 would otherwise be instant, which is why the loop paces itself.
@@ -58,10 +58,10 @@ Pacing makes a persistently failing job survivable, not healthy. A job paced
 at the ceiling can keep failing indefinitely with only a metric to show it, so
 the loop can be bounded:
 
-- `JobLockOptions.MaxConsecutiveFailures` — how many consecutive failures to
-  tolerate. When the limit is reached `RunInJobLock` returns an error wrapping
+- `joblock.Options.MaxConsecutiveFailures` — how many consecutive failures to
+  tolerate. When the limit is reached `joblock.Run` returns an error wrapping
   the last failure instead of restarting. Zero, the default, restarts forever.
-- `JobLockOptions.HealthyRuntime` — how long a run must last to count as a
+- `joblock.Options.HealthyRuntime` — how long a run must last to count as a
   success, five minutes by default.
 
 The definition of a success is deliberately not "returned nil" but "ran for at
@@ -108,7 +108,7 @@ own panic containment to avoid crashing the service.
 
 ## Notes for call sites
 
-- **Prefer `RunInJobLock` to `JobLock.RunWithContext`.** The one-shot API gives
+- **Prefer `joblock.Run` to `joblock.Lock.RunWithContext`.** The one-shot API gives
   the caller no way to distinguish lock loss from a shutdown — both arrive as a
   cancelled context — so a task that treats cancellation as a graceful stop
   exits silently on lock loss and leaves the service running without that
@@ -123,7 +123,7 @@ own panic containment to avoid crashing the service.
 
 ## Pointers
 
-- `pg/joblock_service.go` — `RunInJobLock` and `restartPacer`.
-- `pg/joblock.go` — `JobLockOptions`, `RunWithContext`, the lock loop, ping
+- `pg/joblock/run.go` — `joblock.Run` and `restartPacer`.
+- `pg/joblock/lock.go` — `joblock.Options`, `RunWithContext`, the lock loop, ping
   and stale-lock stealing.
 - `docs/metrics.md` — job lock alerting.

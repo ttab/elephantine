@@ -1,4 +1,4 @@
--- Generated from the tern migrations in pg/schema by
+-- Generated from this package's tern migrations by
 -- `mage sql:librarySchema`. Do not edit.
 
 CREATE TABLE job_lock (
