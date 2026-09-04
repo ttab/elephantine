@@ -20,6 +20,27 @@ type CORSOptions struct {
 	AllowedMethods         []string
 	AllowedHeaders         []string
 	MaxAgeSeconds          int
+
+	// PublicPrefixes are request path prefixes that are open to any origin.
+	// A request whose path starts with one of them is answered with
+	// "Access-Control-Allow-Origin: *" and no "Vary: Origin", and a
+	// preflight for it is allowed whatever the Origin header says. Requests
+	// to any other path are unaffected and go through the Hosts and
+	// HostPatterns checks as before.
+	//
+	// This is for anonymous read surfaces that sit behind a CDN: a response
+	// that varies on Origin is cached once per embedding site, and an
+	// origin allowlist is meaningless for content anyone may fetch without
+	// credentials anyway. Never mark a path that reads the caller's
+	// authorization or cookies as public — the browser will not send
+	// credentials to a wildcard origin, but a shared cache in front of the
+	// service would still be free to serve one caller's response to
+	// another.
+	//
+	// Prefixes are matched literally with strings.HasPrefix, so include the
+	// trailing slash ("/public/") unless you mean to cover every path that
+	// merely starts with the string.
+	PublicPrefixes []string
 }
 
 func CORSMiddleware(opts CORSOptions, handler http.Handler) http.Handler {
@@ -31,12 +52,18 @@ func CORSMiddleware(opts CORSOptions, handler http.Handler) http.Handler {
 		accessMethod := r.Header.Get("Access-Control-Request-Method")
 		origin := r.Header.Get("Origin")
 		header := w.Header()
+		public := opts.publicPath(r.URL.Path)
 
 		if r.Method == http.MethodOptions && accessMethod != "" {
-			if !opts.AllowOrigin(origin) {
+			if !public && !opts.AllowOrigin(origin) {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 
 				return
+			}
+
+			allowOrigin := origin
+			if public {
+				allowOrigin = "*"
 			}
 
 			header.Set("Access-Control-Allow-Methods",
@@ -44,7 +71,7 @@ func CORSMiddleware(opts CORSOptions, handler http.Handler) http.Handler {
 			header.Set("Access-Control-Allow-Headers",
 				strings.Join(opts.AllowedHeaders, ","))
 			header.Set("Access-Control-Allow-Origin",
-				origin)
+				allowOrigin)
 			header.Set("Access-Control-Max-Age",
 				fmt.Sprintf("%d", opts.MaxAgeSeconds))
 
@@ -53,13 +80,31 @@ func CORSMiddleware(opts CORSOptions, handler http.Handler) http.Handler {
 			return
 		}
 
-		if origin != "" && opts.AllowOrigin(origin) {
+		switch {
+		case public:
+			// No Vary: the response is the same for every origin,
+			// and a Vary would give a CDN one cache entry per
+			// embedding site.
+			header.Set("Access-Control-Allow-Origin", "*")
+		case origin != "" && opts.AllowOrigin(origin):
 			header.Set("Access-Control-Allow-Origin", origin)
 			header.Set("Vary", "Origin")
 		}
 
 		handler.ServeHTTP(w, r)
 	})
+}
+
+// publicPath reports whether the request path is covered by one of the
+// PublicPrefixes.
+func (opts CORSOptions) publicPath(path string) bool {
+	for _, prefix := range opts.PublicPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // AllowOrigin reports whether the given Origin header value is

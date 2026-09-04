@@ -25,6 +25,86 @@ func APIServerCORSHosts(hosts ...string) APIServerOption {
 	}
 }
 
+// APIServerPublicCORS marks request path prefixes as open to any origin:
+// requests under them are answered with "Access-Control-Allow-Origin: *" and
+// no "Vary: Origin", and their preflights succeed whatever the Origin header
+// is. Paths outside the prefixes keep the origin allowlist from
+// APIServerCORSHosts.
+//
+// Use it for anonymous read surfaces, typically served through a CDN, where
+// the per-origin response and the Vary header only fragment the cache. See
+// CORSOptions.PublicPrefixes for the full semantics and the caveat about paths
+// that read credentials. Prefixes are matched literally, so pass "/public/"
+// rather than "/public".
+func APIServerPublicCORS(prefixes ...string) APIServerOption {
+	return func(s *APIServer) {
+		s.CORS.PublicPrefixes = append(s.CORS.PublicPrefixes, prefixes...)
+	}
+}
+
+// DefaultMaxBodyBytes is the request body limit an APIServer applies when
+// APIServerMaxBodyBytes isn't used.
+//
+// The number is picked from what our services actually send. The routine Twirp
+// body is a document write: a news document with its blocks, metadata and
+// links serialises to tens of kilobytes of JSON, and the largest we see stay
+// well under a megabyte. The outliers are the RPCs that carry file content
+// inline as a protobuf bytes field — elephant-hub's PublishVersion and
+// BulkPublishVersion ship manifests and assets that way — where the JSON
+// encoding adds a third on top for base64. Eight mebibytes leaves an order of
+// magnitude of headroom over the first case and room for a multi-megabyte
+// bundle in the second.
+//
+// It matters because Twirp buffers the whole request body in memory and then
+// unmarshals it, so an unbounded body is an unbounded allocation per in-flight
+// request: the limit is what one caller can make a replica hold.
+//
+// A service that serves real file uploads on the API listener — elephant-hub's
+// CI publish endpoint takes multipart bodies up to 64 MiB — has to raise this
+// with APIServerMaxBodyBytes.
+const DefaultMaxBodyBytes int64 = 8 << 20
+
+// APIServerMaxBodyBytes limits the size of a request body accepted by the API
+// listener, overriding DefaultMaxBodyBytes. A request that declares a larger
+// Content-Length is refused with 413 before it reaches a handler, and a
+// request that streams past the limit fails on read.
+//
+// Pass a value of zero or less to turn the limit off. Do that only for a
+// listener that has to accept genuinely large uploads, and prefer raising the
+// limit to removing it.
+func APIServerMaxBodyBytes(n int64) APIServerOption {
+	return func(s *APIServer) {
+		s.maxBodyBytes = n
+	}
+}
+
+// MaxBodyBytesMiddleware caps the request bodies passed to the wrapped
+// handler at n bytes. A request that declares a larger Content-Length is
+// refused with 413 without being read; anything else gets a
+// http.MaxBytesReader body, so a chunked or lying request fails when the
+// handler reads past the limit. A limit of zero or less is no limit.
+func MaxBodyBytesMiddleware(n int64, handler http.Handler) http.Handler {
+	if n <= 0 {
+		return handler
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > n {
+			http.Error(w,
+				"request body too large",
+				http.StatusRequestEntityTooLarge)
+
+			return
+		}
+
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, n)
+		}
+
+		handler.ServeHTTP(w, r)
+	})
+}
+
 func APIServerTLS(addr string, certFile string, keyFile string) APIServerOption {
 	return func(s *APIServer) {
 		s.tlsAddr = addr
@@ -119,13 +199,14 @@ func newAPIServer(
 	opts ...APIServerOption,
 ) *APIServer {
 	s := APIServer{
-		testServer:  testServer,
-		logger:      logger,
-		addr:        addr,
-		profileAddr: profileAddr,
-		handler:     handler,
-		Mux:         http.NewServeMux(),
-		Health:      health,
+		testServer:   testServer,
+		logger:       logger,
+		addr:         addr,
+		profileAddr:  profileAddr,
+		handler:      handler,
+		maxBodyBytes: DefaultMaxBodyBytes,
+		Mux:          http.NewServeMux(),
+		Health:       health,
 		CORS: &CORSOptions{
 			AllowInsecure:          false,
 			AllowInsecureLocalhost: true,
@@ -174,8 +255,9 @@ type APIServer struct {
 	keyFile     string
 	handler     *handlerWrapper
 
-	appVersion string
-	modules    []string
+	appVersion   string
+	modules      []string
+	maxBodyBytes int64
 
 	Mux    *http.ServeMux
 	Health *HealthServer
@@ -237,6 +319,9 @@ func (s *APIServer) ListenAndServe(ctx context.Context) error {
 	if s.CORS != nil {
 		handler = CORSMiddleware(*s.CORS, s.Mux)
 	}
+
+	// Outermost, so that everything in the chain sees a bounded body.
+	handler = MaxBodyBytesMiddleware(s.maxBodyBytes, handler)
 
 	var loggingHandler http.HandlerFunc = func(w http.ResponseWriter, r *http.Request) {
 		ctx := WithLogMetadata(r.Context())

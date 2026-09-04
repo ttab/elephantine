@@ -8,7 +8,7 @@ Shared functionality for Elephant systems. It's most likely not something anyone
 
 ### Root package
 
-- **HTTP/API server** — production-ready server with graceful shutdown, TLS, CORS, health/readiness probes, and pprof
+- **HTTP/API server** — production-ready server with graceful shutdown, TLS, CORS (with public, CDN-friendly path prefixes), request body limits, health/readiness probes, and pprof
 - **JWT & OIDC** — JWT claims parsing, OIDC discovery, and OAuth2 client credentials
 - **Twirp RPC** — logging hooks, Prometheus metrics, and auth middleware for Twirp services
 - **HTTP client** — configurable client with timeouts, connection limits, oauth2 token injection, and Prometheus instrumentation
@@ -32,6 +32,58 @@ Shared functionality for Elephant systems. It's most likely not something anyone
 - `Must`/`MustNot` assertions and generic equality checks with diff output
 - Golden file testing for JSON and protobuf
 - Test helpers for JWT auth, Twirp services, and structured logging
+
+## CORS and request bodies
+
+`APIServer` wraps the request mux in the CORS middleware and a request body
+limit before handing it to the listeners, so both the plain and the TLS server
+get the same treatment.
+
+### CORS
+
+Origins are checked against an allowlist: `Hosts` entries match a hostname
+exactly or as a parent domain, `HostPatterns` entries are globs, and the scheme
+must be `https` unless the host is `localhost`. The defaults allow `localhost`
+and `tt.se`; `APIServerCORSHosts(...)` replaces the host list. An allowed origin
+is echoed back in `Access-Control-Allow-Origin` together with `Vary: Origin`.
+
+An anonymous read surface served through a CDN wants the opposite of that: the
+response is the same for everyone, and varying on `Origin` gives the CDN one
+cache entry per embedding site. Mark such paths public:
+
+```go
+srv := elephantine.NewAPIServer(logger, addr, profileAddr,
+    elephantine.APIServerPublicCORS("/public/"),
+)
+```
+
+A request whose path starts with a public prefix is answered with
+`Access-Control-Allow-Origin: *` and no `Vary` header, and its preflight is
+answered with a `204` whatever the `Origin` header says. Everything outside the
+prefixes keeps the allowlist behaviour unchanged. Prefixes are matched
+literally, so pass `"/public/"` rather than `"/public"`.
+
+Do not mark a path that reads the caller's `Authorization` header or cookies as
+public. The browser will not send credentials to a wildcard origin, but a shared
+cache in front of the service is still free to hand one caller's response to
+another.
+
+### Request body limit
+
+Request bodies are capped at `DefaultMaxBodyBytes` (8 MiB). A request that
+declares a larger `Content-Length` is refused with `413` before it reaches a
+handler; a body of unknown length fails when the handler reads past the limit.
+The cap matters because Twirp buffers the whole body in memory before
+unmarshalling it, so the limit is what a single caller can make a replica hold.
+
+Override it per service, and only turn it off (`0` or less) for a listener that
+has to take genuinely large uploads:
+
+```go
+srv := elephantine.NewAPIServer(logger, addr, profileAddr,
+    elephantine.APIServerMaxBodyBytes(64<<20),
+)
+```
 
 ## Reporting the application version
 
