@@ -9,15 +9,14 @@ import (
 
 // Prometheus metric label names used by the instrumentation in this package.
 // These are distinct from the log attribute keys (LogKey*), even where the
-// string value happens to coincide.
+// string value happens to coincide. The RPC metric labels live in
+// internal/rpcmetrics, since the Twirp hooks and the Connect interceptor share
+// them.
 const (
-	clientLabel   = "client"
-	codeLabel     = "code"
-	methodLabel   = "method"
-	eventLabel    = "event"
-	serviceLabel  = "service"
-	customerLabel = "customer"
-	statusLabel   = "status"
+	clientLabel = "client"
+	codeLabel   = "code"
+	methodLabel = "method"
+	eventLabel  = "event"
 )
 
 // RegisterOrReuse registers the collector with the registerer. If a collector

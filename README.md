@@ -10,13 +10,19 @@ Shared functionality for Elephant systems. It's most likely not something anyone
 
 - **HTTP/API server** — production-ready server with graceful shutdown, TLS, CORS (with public, CDN-friendly path prefixes), request body limits, health/readiness probes, and pprof
 - **JWT & OIDC** — JWT claims parsing, OIDC discovery, and OAuth2 client credentials
-- **Twirp RPC** — logging hooks, Prometheus metrics, and auth middleware for Twirp services
+- **RPC** — protocol-neutral authentication middleware, and the Twirp hooks and Connect interceptors that give a service the same logging, metrics and error behaviour on both stacks. See [Serving Connect and Twirp](#serving-connect-and-twirp)
 - **HTTP client** — configurable client with timeouts, connection limits, oauth2 token injection, and Prometheus instrumentation
 - **Graceful shutdown** — signal-based (SIGINT/SIGTERM) shutdown coordination
 - **Error groups** — panic-recovering error groups with retry and backoff support, restarts are counted in the `task_restarts_total` metric
 - **Prometheus helpers** — `MetricsHelper` for registering counters, gauges, and histograms, and `RegisterOrReuse` for metrics that are shared between components. Metric conventions for elephant services are documented in [docs/metrics.md](docs/metrics.md)
 - **Feature flags** — context-based feature flag propagation
 - **Vault** — HashiCorp Vault client with Kubernetes auth
+
+### `rpc/` — RPC errors and interceptors
+
+- The error vocabulary every elephant service returns: `rpc.NotFound`, `rpc.InvalidArgument`, `rpc.FailedPreconditionf` and the rest, producing `*connect.Error` with the metadata Twirp carried in its meta map
+- `rpc.ToTwirp`/`rpc.FromTwirp` and the interceptors that install them, so one implementation answers both protocols identically
+- `rpc.RequireAnyScope`, `rpc.LoggingInterceptor`, `rpc.MetricsInterceptor`, `rpc.WithOutgoingHeaders`/`rpc.PropagateHeaders`
 
 ### `pg/` — PostgreSQL
 
@@ -34,7 +40,7 @@ Shared functionality for Elephant systems. It's most likely not something anyone
 
 - `Must`/`MustNot` assertions and generic equality checks with diff output
 - Golden file testing for JSON and protobuf
-- Test helpers for JWT auth, Twirp services, and structured logging
+- Test helpers for JWT auth, RPC errors (`IsRPCError`, `ErrorParity`) and structured logging
 
 ### `cmd/protoc-gen-elephant-rpc` — Connect adapters
 
@@ -91,6 +97,106 @@ after changing the plugin, and note that the generated fixture packages are
 compiled by the test rather than by `go build ./...`, since the go command
 skips `testdata`.
 
+## Serving Connect and Twirp
+
+A service implements the plain protobuf interface — `Get(ctx, *GetRequest)
+(*GetResponse, error)` — once, and mounts it on both protocols. Twirp serves
+`/twirp/<pkg>.<Service>/<Method>`, Connect serves `/<pkg>.<Service>/<Method>`
+plus gRPC and gRPC-Web on the same path, so the two mounts never collide.
+
+```go
+opt, err := elephantine.NewDefaultServiceOptions(
+    logger, authParser, reg, elephantine.ServiceAuthRequired)
+if err != nil {
+    return fmt.Errorf("set up service options: %w", err)
+}
+
+server.RegisterAPI(repository.NewDocumentsServer(
+    svc, opt.ServerOptions()), opt)
+
+path, handler := repositoryconnect.NewDocumentsServiceHandler(
+    svc, opt.HandlerOptions()...)
+
+server.RegisterConnect(path, handler, opt)
+```
+
+`NewDefaultServiceOptions` fills in both stacks, so a service gets logging,
+metrics and authentication parity by construction. A service whose handlers
+still return Twirp errors adds `rpc.LegacyTwirpErrors()` to
+`opt.Interceptors`, and removes it in the change that moves the handlers to
+the helpers below.
+
+### Errors
+
+`*connect.Error` is the neutral error type, and the Twirp mount translates on
+the way out. Error metadata travels as an `elephantine.rpc.ErrorMeta` detail,
+declared in `rpc/errormeta.proto`, because Connect has no free-form meta map in
+the response body; the Twirp translation flattens it back into one.
+
+| Twirp | `rpc` |
+|---|---|
+| `twirp.NewErrorf(code, ...)` | `rpc.Errorf(code, ...)` |
+| `twirp.InvalidArgumentError(arg, msg)` | `rpc.InvalidArgument(arg, msg)` |
+| `elephantine.InvalidArgumentf(arg, ...)` | `rpc.InvalidArgumentf(arg, ...)` |
+| `twirp.RequiredArgumentError(arg)` | `rpc.RequiredArgument(arg)` |
+| `twirp.NotFoundError(msg)` | `rpc.NotFound(msg)` |
+| `twirp.InternalErrorf(...)` | `rpc.Internalf(...)` |
+| `twirp.FailedPrecondition.Errorf(...)` | `rpc.FailedPreconditionf(...)` |
+| `twirp.PermissionDenied.Errorf(...)` | `rpc.PermissionDeniedf(...)` |
+| `twirp.Unauthenticated.Error(msg)` | `rpc.Unauthenticated(msg)` |
+| `twirp.AlreadyExists.Error(msg)` | `rpc.AlreadyExists(msg)` |
+| `err.WithMeta(k, v)` | `rpc.WithMeta(err, k, v)` |
+| `err.MetaMap()` | `rpc.Meta(err)` |
+| `elephantine.IsTwirpErrorCode(err, code)` | `rpc.IsCode(err, code)` |
+| `elephantine.RequireAnyScope(ctx, ...)` | `rpc.RequireAnyScope(ctx, ...)` |
+| `test.IsTwirpError(t, err, code)` | `test.IsRPCError(t, err, code)` |
+
+`rpc.IsCode` accepts both error types, so a caller can move its checks before
+it moves its client constructor. `test.ErrorParity(t, twirpErr, connectErr)`
+asserts that the same call answered the two stacks with the same code, message
+and metadata, which is what makes a service's move checkable.
+
+The codes are identical, and so are the HTTP statuses except three:
+`canceled` is `499` rather than `408`, `deadline_exceeded` is `504` rather than
+`408`, and `failed_precondition` is `400` rather than `412`. Anything keyed on
+`412` for lock conflicts reads `rpc_protocol_responses_total{code=...}`
+instead.
+
+### Authentication
+
+Authentication is protocol-neutral HTTP middleware. `SetAuthInfoValidation`
+parses the `Authorization` header and puts the `AuthInfo` on the request
+context, where both stacks read it with `GetAuthInfo`. The middleware cannot
+know which protocol the caller speaks, so a request it could not authenticate
+is let through with the reason recorded on the context, and the Twirp hook and
+the Connect interceptor turn that into the coded error before the handler runs:
+`unauthenticated` for a missing authorization, `permission_denied` for an
+invalid one. `ServiceAuthOptional` lets a missing authorization through; an
+invalid one always fails.
+
+### Client headers
+
+A caller that needs per-call headers, which `twirp.WithHTTPRequestHeaders`
+gave it, sets them on the context and adds one client interceptor:
+
+```go
+client := repositoryconnect.NewDocumentsServiceClient(
+    httpClient, endpoint,
+    connect.WithInterceptors(rpc.PropagateHeaders()))
+
+ctx = rpc.WithOutgoingHeaders(ctx, http.Header{
+    "X-Forwarded-For": []string{addr},
+})
+```
+
+### Generating the protobuf in this repository
+
+`mage proto:generate` compiles `rpc/errormeta.proto` and the fixture service in
+`internal/testservice`, with buf and the plugin versions
+`github.com/ttab/mage/rpc` pins. `rpc:generate` in ttab/mage cannot be used
+here, since it discovers services as `<proto root>/*/service.proto` and neither
+source is laid out that way.
+
 ## CORS and request bodies
 
 `APIServer` wraps the request mux in the CORS middleware and a request body
@@ -102,7 +208,10 @@ get the same treatment.
 Origins are checked against an allowlist: `Hosts` entries match a hostname
 exactly or as a parent domain, `HostPatterns` entries are globs, and the scheme
 must be `https` unless the host is `localhost`. The defaults allow `localhost`
-and `tt.se`; `APIServerCORSHosts(...)` replaces the host list. An allowed origin
+and `tt.se`; `APIServerCORSHosts(...)` replaces the host list. The default
+allowed headers are `Authorization`, `Content-Type`, `Connect-Protocol-Version`
+and `Connect-Timeout-Ms`, the last two because a browser Connect client sends
+them on every call. An allowed origin
 is echoed back in `Access-Control-Allow-Origin` together with `Vary: Origin`.
 
 An anonymous read surface served through a CDN wants the opposite of that: the

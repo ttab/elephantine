@@ -7,76 +7,34 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jellydator/ttlcache/v3"
-	"github.com/twitchtv/twirp"
+	"github.com/ttab/elephantine/internal/auth"
+	"github.com/ttab/elephantine/rpc"
 )
 
 // JWTClaims defines the claims that the elephant services understand.
-type JWTClaims struct {
-	jwt.RegisteredClaims
+//
+// It is an alias of the type in the internal auth package, which is where it
+// has to live for the rpc package to be able to use it without importing this
+// one. It is the same type as rpc.JWTClaims.
+type JWTClaims = auth.JWTClaims
 
-	OriginalSub string `json:"-"`
-
-	Name            string   `json:"sub_name"`
-	Email           string   `json:"email"`
-	Scope           string   `json:"scope"`
-	AuthorizedParty string   `json:"azp"`
-	ClientID        string   `json:"client_id"`
-	Units           []string `json:"units,omitempty"`
-	Org             string   `json:"org"`
-}
-
-// HasScope returns true if the Scope claim contains the named scope.
-func (c JWTClaims) HasScope(name string) bool {
-	scopes := strings.Split(c.Scope, " ")
-
-	return slices.Contains(scopes, name)
-}
-
-// HasAnyScope returns true if the Scope claim contains any of the named scopes.
-func (c JWTClaims) HasAnyScope(names ...string) bool {
-	scopes := strings.Split(c.Scope, " ")
-
-	for i := range scopes {
-		if slices.Contains(names, scopes[i]) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// AuthInfo is used to add authentication information to a request context.
-type AuthInfo struct {
-	Token  string
-	Claims JWTClaims
-}
+// AuthInfo is used to add authentication information to a request context. It
+// is the same type as rpc.AuthInfo.
+type AuthInfo = auth.Info
 
 // ErrNoAuthorization is used to communicate that authorization was completely
 // missing, rather than being invalid, expired, or malformed.
-var ErrNoAuthorization = errors.New("no authorization provided")
+var ErrNoAuthorization = auth.ErrNoAuthorization
 
 // AuthInfoParser validates bearer tokens and turns them into AuthInfo. See
 // JWTAuthInfoParser for the standard JWT-based implementation.
-type AuthInfoParser interface {
-	// AuthInfoFromHeader extracts the AuthInfo from a HTTP Authorization
-	// header, then validates the bearer token. Return ErrNoAuthorization
-	// if no authorization information was provided.
-	AuthInfoFromHeader(authorization string) (*AuthInfo, error)
-	// AuthInfoFromToken validates a bearer token and returns the AuthInfo.
-	// Useful when we have already extracted the token from header and/or
-	// query parameter.
-	AuthInfoFromToken(token string) (*AuthInfo, error)
-	// ValidateTokenWithClaims validates a bearer token and returns the raw token
-	// object. Useful if you need to do custom claims deserialization.
-	ValidateTokenWithClaims(token string, claims jwt.Claims) (*jwt.Token, error)
-}
+type AuthInfoParser = auth.Parser
 
 // JWTAuthInfoParser is the standard AuthInfoParser implementation. It
 // validates JWTs using the configured key function, caches successful results
@@ -290,14 +248,12 @@ func (p *JWTAuthInfoParser) Valid(c jwt.Claims) error {
 // SetAuthInfo creates a child context with the given authentication
 // information.
 func SetAuthInfo(ctx context.Context, info *AuthInfo) context.Context {
-	return context.WithValue(ctx, authInfoCtxKey, info)
+	return auth.SetInfo(ctx, info)
 }
 
 // GetAuthInfo returns the authentication information for the given context.
 func GetAuthInfo(ctx context.Context) (*AuthInfo, bool) {
-	info, ok := ctx.Value(authInfoCtxKey).(*AuthInfo)
-
-	return info, ok && info != nil
+	return auth.GetInfo(ctx)
 }
 
 // RequireAnyScope checks that the authenticated caller carries one of
@@ -311,19 +267,16 @@ func GetAuthInfo(ctx context.Context) (*AuthInfo, bool) {
 //
 // Scopes are OR-ed: passing more than one means the caller may hold
 // any of them.
+//
+// Deprecated: use [github.com/ttab/elephantine/rpc.RequireAnyScope], which
+// returns the same check's result as a *connect.Error. This function is that
+// one with rpc.ToTwirp applied to the error, and goes away with the last Twirp
+// mount in the fleet.
 func RequireAnyScope(ctx context.Context, scopes ...string) (*AuthInfo, error) {
-	auth, ok := GetAuthInfo(ctx)
-	if !ok || auth.Claims.Subject == "" {
-		return nil, twirp.Unauthenticated.Error(
-			"no anonymous access allowed")
+	info, err := rpc.RequireAnyScope(ctx, scopes...)
+	if err != nil {
+		return nil, rpc.ToTwirp(err)
 	}
 
-	if !auth.Claims.HasAnyScope(scopes...) {
-		err := twirp.PermissionDenied.Error("missing required scope")
-		err = err.WithMeta("required_any_of_scopes", strings.Join(scopes, " "))
-
-		return nil, err
-	}
-
-	return auth, nil
+	return info, nil
 }

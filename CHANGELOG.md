@@ -6,8 +6,89 @@ detail.
 
 ## [v0.29.0] - Unreleased
 
+**Behaviour change (authentication):** `ServiceOptions.SetAuthInfoValidation`
+is protocol-neutral HTTP middleware rather than a Twirp `RequestRouted` hook,
+so that a service serving Connect authenticates its callers the same way on
+both stacks. The middleware parses the `Authorization` header and puts the
+`AuthInfo` on the request context, and a request it could not authenticate is
+let through with the reason recorded, which the Twirp hook and the Connect
+interceptor installed alongside it turn into the coded error before the handler
+runs. Twirp callers see exactly the codes they saw before — `unauthenticated`
+for a missing authorization, `permission_denied` for an invalid one — and
+`ServiceAuthOptional` still lets an anonymous caller through. What is gone is
+the `twirp.WithHTTPRequestHeaders` smuggling the middleware used to do: a
+handler that read the `Authorization` header back out of the Twirp context with
+`twirp.HTTPRequestHeaders` no longer finds it, and reads `GetAuthInfo(ctx)`
+instead.
+
+**Behaviour change (RPC metrics):** `rpc_requests_total`,
+`rpc_duration_seconds` and `rpc_responses_total` keep their names, labels, help
+texts and label values, but the collectors are now declared once and shared
+between the Twirp hooks and the Connect interceptor, so a dual-stack service
+reports one set of series and registers each metric once. As a consequence
+`NewTwirpMetricsHooks` reuses an already registered collector where it used to
+fail with a registration error. A new counter,
+`rpc_protocol_responses_total{service,method,protocol,code}`, is reported by
+both stacks: `protocol="twirp"` going to zero for a method is what says its
+Twirp mount can be removed, and the `code` label is the error breakdown
+`rpc_responses_total` cannot give, since Connect answers `failed_precondition`
+with `400` rather than Twirp's `412` and so a lock conflict no longer has a
+status of its own. `ServiceOptions.AddMetricsHooks` takes the
+`TwirpMetricOptionFunc` options as a variadic second argument and passes the
+customer function on to the Connect interceptor.
+
+**Behaviour change (CORS):** the default allowed request headers gain
+`Connect-Protocol-Version` and `Connect-Timeout-Ms`, which a browser Connect
+client sends on every call. A service that replaced `CORS.AllowedHeaders`
+outright has to add them itself.
+
+**Deprecations:** the Twirp-only error helpers are deprecated in favour of the
+`rpc` package, and go away with the last Twirp mount in the fleet, which is
+years rather than months away — nothing has to move today.
+`elephantine.InvalidArgumentf` becomes `rpc.InvalidArgumentf`,
+`IsTwirpErrorCode` becomes `rpc.IsCode`, `TwirpErrorToHTTPStatusCode` becomes
+`rpc.HTTPStatus`, `RequireAnyScope` becomes `rpc.RequireAnyScope`,
+`LoggingHooks` and `NewTwirpMetricsHooks` become `rpc.LoggingInterceptor` and
+`rpc.MetricsInterceptor` (both installed by `NewDefaultServiceOptions`), and
+`test.IsTwirpError` becomes `test.IsRPCError`. The root `RequireAnyScope` now
+delegates to the `rpc` one and translates the error, so its behaviour is
+unchanged by construction.
+
 Changes:
 
+- New package `github.com/ttab/elephantine/rpc`, the protocol-neutral RPC
+  vocabulary. `rpc.Errorf`, `rpc.InvalidArgument`, `rpc.RequiredArgument`,
+  `rpc.NotFound`, `rpc.AlreadyExists`, `rpc.Unauthenticated`, `rpc.Internalf`,
+  `rpc.FailedPreconditionf` and `rpc.PermissionDeniedf` produce
+  `*connect.Error`; `rpc.WithMeta` and `rpc.Meta` carry the metadata Twirp
+  carried in its meta map, as an `elephantine.rpc.ErrorMeta` detail declared in
+  `rpc/errormeta.proto`; and `rpc.IsCode` recognises both error types, so a
+  caller can move its error checks before it moves its client constructor.
+- `rpc.ToTwirp` and `rpc.FromTwirp` translate in both directions, preserving the
+  code, the message, the metadata and the cause chain, so `errors.Is` keeps
+  reaching a `pgx` or `context` error through either. `rpc.TwirpInterceptor`,
+  which `ServiceOptions.ServerOptions` now always installs, is what lets a
+  handler that returns Connect errors answer a Twirp caller unchanged, and
+  `rpc.LegacyTwirpErrors` is the transitional interceptor for a service that
+  serves Connect before its handlers have moved. Note that the interceptor
+  finds a Twirp error anywhere in the error tree, where the generated Twirp
+  server only recognised one returned bare: a handler that returned
+  `fmt.Errorf("get the document: %w", twirp.NotFoundError("..."))` answered
+  `internal` with the wrapped message before, and answers `not_found` with the
+  Twirp error's own message now.
+- `APIServer.RegisterConnect(path, handler, opt)` mounts a Connect handler
+  behind the same authentication middleware as the Twirp services, and
+  `ServiceOptions.HandlerOptions()` is the Connect counterpart of
+  `ServerOptions()`. `NewDefaultServiceOptions` fills in both, so a service that
+  mounts both protocols gets logging, metrics, authentication and error
+  behaviour parity by construction.
+- `rpc.WithOutgoingHeaders(ctx, h)` and the `rpc.PropagateHeaders()` client
+  interceptor replace `twirp.WithHTTPRequestHeaders` for the callers that set
+  per-call headers.
+- `test.IsRPCError(t, err, code)` accepts either error type, and
+  `test.ErrorParity(t, twirpErr, connectErr)` asserts that the same call
+  answered the two stacks with the same code, message and metadata, which is
+  what makes a service's move to the Connect error vocabulary checkable.
 - `cmd/protoc-gen-elephant-rpc` is a protobuf compiler plugin that keeps the
   plain service interface — `Get(ctx, *GetRequest) (*GetResponse, error)`, the
   one `protoc-gen-twirp` generates — available on top of Connect. For every
@@ -29,6 +110,13 @@ Changes:
   gains no dependency on elephantine. The code it emits imports only
   `connectrpc.com/connect`, `context`, `net/http` and the message package,
   which is what keeps `elephant-api` free of elephantine.
+- `mage proto:generate` compiles the protobuf sources in this repository with
+  buf and the plugin versions `github.com/ttab/mage/rpc` pins. `google.golang.org/protobuf`
+  moves to v1.36.12 to match the `protoc-gen-go` the committed code is generated
+  with.
+- The README gained a "Serving Connect and Twirp" section with the error helper
+  table and the mount, and `docs/metrics.md` an "RPC metrics" section saying
+  what a change in each of the four series means.
 
 ## [v0.28.0] - 2026-09-04
 

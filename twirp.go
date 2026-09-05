@@ -11,6 +11,10 @@ import (
 )
 
 // InvalidArgumentf creates an invalid argument error with a formatted message.
+//
+// Deprecated: use [github.com/ttab/elephantine/rpc.InvalidArgumentf], which
+// creates the same error as a *connect.Error. The Twirp error helpers go away
+// with the last Twirp mount in the fleet.
 func InvalidArgumentf(argument string, format string, a ...any) error {
 	pErr := fmt.Errorf(format, a...)
 
@@ -26,6 +30,10 @@ func InvalidArgumentf(argument string, format string, a ...any) error {
 
 // IsTwirpErrorCode checks if any error in the tree is a twirp.Error with the
 // given error code.
+//
+// Deprecated: use [github.com/ttab/elephantine/rpc.IsCode], which takes a
+// connect.Code and recognises both error types, so a check can be moved before
+// the client constructor that produces the errors is.
 func IsTwirpErrorCode(err error, code twirp.ErrorCode) bool {
 	if err == nil {
 		return false
@@ -42,6 +50,10 @@ func IsTwirpErrorCode(err error, code twirp.ErrorCode) bool {
 // TwirpErrorToHTTPStatusCode returns the HTTP status code for the given
 // error. If the error is nil 200 will be returned, if the error isn't a
 // twirp.Error 500 will be returned.
+//
+// Deprecated: use [github.com/ttab/elephantine/rpc.HTTPStatus] with the code of
+// a *connect.Error. Note that Connect answers canceled, deadline_exceeded and
+// failed_precondition with a different status than Twirp does.
 func TwirpErrorToHTTPStatusCode(err error) int {
 	if err == nil {
 		return http.StatusOK
@@ -57,7 +69,21 @@ func TwirpErrorToHTTPStatusCode(err error) int {
 
 // LoggingHooks creaes a twirp.ServerHooks that will set log metadata for the
 // twirp service and method name, and log error responses.
+//
+// Deprecated: a service that also serves Connect gets the same behaviour on
+// that stack from [github.com/ttab/elephantine/rpc.LoggingInterceptor], and
+// [NewDefaultServiceOptions] installs both. The hooks go away with the last
+// Twirp mount in the fleet.
 func LoggingHooks(
+	logger *slog.Logger,
+) *twirp.ServerHooks {
+	return loggingHooks(logger)
+}
+
+// loggingHooks is the implementation of the deprecated LoggingHooks, called
+// from the service options so that the deprecation does not have to be worked
+// around inside the package.
+func loggingHooks(
 	logger *slog.Logger,
 ) *twirp.ServerHooks {
 	hooks := twirp.ServerHooks{

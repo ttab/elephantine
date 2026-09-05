@@ -64,7 +64,7 @@ The application package takes a `prometheus.Registerer` parameter; only
 the injected registerer:
 
 - job locks via `joblock.Options{MetricsRegisterer: ...}`
-- Twirp hooks via `elephantine.WithTwirpMetricsRegisterer(...)`
+- RPC hooks and interceptors via `elephantine.ServiceOptions.AddMetricsHooks(reg, ...)`
 - error groups via `elephantine.WithErrGroupMetricsRegisterer(...)`
 - FanOut recovery via the shared `MetricsHelper`
 
@@ -86,13 +86,33 @@ Every service should have:
    binary, and every outbound client instrumented under its own name
    (`repository`, `assets`, `s3`, `oidc`, `jwks`, ...), one name per
    dependency.
-4. **RPC** — Twirp metrics hooks with `WithTwirpMetricsCustomerFunc`
+4. **RPC** — `ServiceOptions.AddMetricsHooks(reg,
+   elephantine.WithTwirpMetricsCustomerFunc(...))` with the customer function
    returning the caller's org claim. The org is bounded; the subject would
-   put one label value per API client into every RPC series. Hook order
-   matters: auth hooks must run before the metrics hooks.
+   put one label value per API client into every RPC series. The function is
+   passed on to the Connect interceptor, so the label means the same thing on
+   both stacks.
 5. **Task groups** — top-level subsystems run under
    `elephantine.NewErrGroup` so panics are recovered and restarts are
    counted in `task_restarts_total`.
+
+## RPC metrics
+
+The RPC server metrics are declared by the library, once, and shared between
+the Twirp hooks and the Connect interceptor, so a service serving both
+protocols reports one set of series whichever stack registers first.
+
+| Metric | Labels | What a change means |
+|---|---|---|
+| `rpc_requests_total` | `service`, `method`, `customer` | Requests received. A drop for a method that normally sees steady traffic is a caller that has stopped calling, or an ingress that has stopped routing. |
+| `rpc_duration_seconds` | `service`, `method`, `customer` | Handler runtime. A rising high percentile on one method is that method's dependency, not the service as a whole. |
+| `rpc_responses_total` | `service`, `method`, `status`, `customer` | Responses by HTTP status. Note that Connect answers `failed_precondition` with `400` where Twirp answered `412`, so a lock conflict is not visible as a status any more. |
+| `rpc_protocol_responses_total` | `service`, `method`, `protocol`, `code` | Responses by protocol and RPC code. `protocol="twirp"` going to zero for a method is what says its Twirp mount can be removed; a rising `code` share is the error breakdown `rpc_responses_total` cannot give, since several codes share a status. |
+
+`service` is the short service name (`Documents`), the same value on both
+stacks. `protocol` is one of `twirp`, `connect`, `grpc`, `grpc-web`, or
+`other` for a protocol connect-go adds later. `code` is the RPC code string
+(`not_found`, `failed_precondition`) or `ok`.
 
 ## Job lock alerting
 

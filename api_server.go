@@ -10,7 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/ttab/elephantine/internal/auth"
+	"github.com/ttab/elephantine/rpc"
 	"github.com/twitchtv/twirp"
 	"golang.org/x/sync/errgroup"
 )
@@ -212,7 +215,13 @@ func newAPIServer(
 			AllowInsecureLocalhost: true,
 			Hosts:                  []string{"localhost", "tt.se"},
 			AllowedMethods:         []string{"GET", "POST"},
-			AllowedHeaders:         []string{"Authorization", "Content-Type"},
+			AllowedHeaders: []string{
+				"Authorization", "Content-Type",
+				// Sent by every Connect client, and turned
+				// into a handler deadline.
+				"Connect-Protocol-Version",
+				"Connect-Timeout-Ms",
+			},
 		},
 	}
 
@@ -308,6 +317,32 @@ func (s *APIServer) RegisterAPI(
 		}
 
 		api.ServeHTTP(w, r)
+
+		return nil
+	}))
+}
+
+// RegisterConnect mounts a Connect handler behind the same authentication
+// middleware as the Twirp services. Pass it the path and handler a generated
+// New<Service>ServiceHandler returns:
+//
+//	server.RegisterConnect(documentsv1connect.NewDocumentsServiceHandler(
+//		svc, opt.HandlerOptions()...))
+//
+// The path is a subtree, and no method is bound, since Connect serves gRPC and
+// gRPC-Web on the same path and may answer GET for the RPCs that declare
+// themselves free of side effects.
+func (s *APIServer) RegisterConnect(
+	path string, h http.Handler, opt ServiceOptions,
+) {
+	s.Mux.Handle(path, HTTPErrorHandlerFunc(func(
+		w http.ResponseWriter, r *http.Request,
+	) error {
+		if opt.AuthMiddleware != nil {
+			return opt.AuthMiddleware(w, r, h)
+		}
+
+		h.ServeHTTP(w, r)
 
 		return nil
 	}))
@@ -410,7 +445,7 @@ func (s *APIServer) ListenAndServe(ctx context.Context) error {
 type ServiceAuth bool
 
 const (
-	// ServiceAuthRequired respond with a Twirp Unauthenticated error for
+	// ServiceAuthRequired respond with an unauthenticated error for
 	// unauthorized calls.
 	ServiceAuthRequired ServiceAuth = true
 	// ServiceAuthOptional allow unauthorized calls, invalid authorizations
@@ -419,9 +454,10 @@ const (
 	ServiceAuthOptional ServiceAuth = false
 )
 
-// NewDefaultServiceOptions sets up the standard options for our Twirp
-// services. This sets up authentication, logging and metrics. Apply the options
-// to your Twirp servers using the ServerOptions() method.
+// NewDefaultServiceOptions sets up the standard options for our RPC services.
+// This sets up authentication, logging and metrics for both stacks: apply the
+// options to a Twirp server with the ServerOptions() method, and to a Connect
+// handler with HandlerOptions().
 func NewDefaultServiceOptions(
 	logger *slog.Logger,
 	parser AuthInfoParser,
@@ -443,12 +479,14 @@ func NewDefaultServiceOptions(
 	return so, nil
 }
 
-// ServiceOptions carries the Twirp server hooks and authentication middleware
-// applied to the API services registered with an APIServer. Use
-// NewDefaultServiceOptions for the standard setup, or compose it manually with
-// the Add*/Set* methods, and apply it to a Twirp server with ServerOptions.
+// ServiceOptions carries the Twirp server hooks, the Connect interceptors and
+// the authentication middleware applied to the API services registered with an
+// APIServer. Use NewDefaultServiceOptions for the standard setup, or compose it
+// manually with the Add*/Set* methods, and apply it to a Twirp server with
+// ServerOptions and to a Connect handler with HandlerOptions.
 type ServiceOptions struct {
 	Hooks          *twirp.ServerHooks
+	Interceptors   []connect.Interceptor
 	AuthMiddleware func(
 		w http.ResponseWriter, r *http.Request, next http.Handler,
 	) error
@@ -457,47 +495,120 @@ type ServiceOptions struct {
 	// default values in JSON responses, which results in smaller responses
 	// that are easier to read if your messages contain lots of fields that
 	// may have their default/zero value.
+	//
+	// It only affects the Twirp mount. Connect's JSON codec is protojson
+	// with its default options, which already omit unpopulated fields, so
+	// the two stacks produce the same JSON either way.
 	JSONSkipDefaults bool
 }
 
 // ServerOptions returns a ServerOptions function that configures the twirp
 // server according to the set service options.
+//
+// The Twirp error interceptor is always installed, so that a handler that has
+// been moved to the Connect error vocabulary answers a Twirp caller with the
+// code, message and meta it always has. It is a no-op for a handler that still
+// returns Twirp errors.
 func (so *ServiceOptions) ServerOptions() twirp.ServerOption {
 	return func(opts *twirp.ServerOptions) {
 		twirp.WithServerJSONSkipDefaults(so.JSONSkipDefaults)(opts)
 		twirp.WithServerHooks(so.Hooks)(opts)
+		twirp.WithServerInterceptors(rpc.TwirpInterceptor())(opts)
+	}
+}
+
+// HandlerOptions returns the options that configure a Connect handler according
+// to the set service options. It is the Connect counterpart of ServerOptions,
+// and is passed to the generated New<Service>ServiceHandler constructor.
+func (so *ServiceOptions) HandlerOptions() []connect.HandlerOption {
+	if len(so.Interceptors) == 0 {
+		return nil
+	}
+
+	return []connect.HandlerOption{
+		connect.WithInterceptors(so.Interceptors...),
 	}
 }
 
 func (so *ServiceOptions) AddLoggingHooks(
 	logger *slog.Logger,
 ) {
-	so.Hooks = twirp.ChainHooks(LoggingHooks(logger), so.Hooks)
+	so.Hooks = twirp.ChainHooks(loggingHooks(logger), so.Hooks)
+
+	so.addInterceptor(rpc.LoggingInterceptor(logger))
 }
 
-func (so *ServiceOptions) AddMetricsHooks(reg prometheus.Registerer) error {
-	hooks, err := NewTwirpMetricsHooks(WithTwirpMetricsRegisterer(reg))
+// AddMetricsHooks adds the RPC metrics to both stacks. The options are the ones
+// that configure the Twirp hooks; the customer function and the test latency
+// are passed on to the Connect interceptor so that the two report the same
+// label values, and WithTwirpMetricsRegisterer overrides the registerer for
+// both.
+func (so *ServiceOptions) AddMetricsHooks(
+	reg prometheus.Registerer, opts ...TwirpMetricOptionFunc,
+) error {
+	opt := TwirpMetricsOptions{
+		reg: reg,
+		contextCustomer: func(_ context.Context) string {
+			return ""
+		},
+	}
+
+	for i := range opts {
+		opts[i](&opt)
+	}
+
+	hooks, err := newTwirpMetricsHooks(
+		WithTwirpMetricsRegisterer(opt.reg),
+		WithTwirpMetricsStaticTestLatency(opt.testLatency),
+		WithTwirpMetricsCustomerFunc(opt.contextCustomer),
+	)
 	if err != nil {
 		return err
 	}
 
+	interceptor, err := rpc.MetricsInterceptor(opt.reg,
+		rpc.WithMetricsCustomerFunc(opt.contextCustomer),
+		rpc.WithMetricsStaticTestLatency(opt.testLatency),
+	)
+	if err != nil {
+		return fmt.Errorf("create the Connect metrics interceptor: %w", err)
+	}
+
 	so.Hooks = twirp.ChainHooks(so.Hooks, hooks)
+
+	so.addInterceptor(interceptor)
 
 	return nil
 }
 
+// addInterceptor puts an interceptor outermost in the chain, so that the
+// interceptors added last wrap the ones added before them. That is what makes
+// the metrics interceptor observe the error the authentication interceptor
+// returns, the way the Twirp response hook observes it.
+func (so *ServiceOptions) addInterceptor(i connect.Interceptor) {
+	so.Interceptors = append([]connect.Interceptor{i}, so.Interceptors...)
+}
+
+// SetAuthInfoValidation makes the service authenticate its callers with the
+// parser.
+//
+// Authentication is protocol neutral HTTP middleware: it parses the
+// Authorization header, and puts the resulting AuthInfo on the request context,
+// where both stacks read it with GetAuthInfo. The middleware cannot know which
+// protocol the caller is speaking, and so cannot render an error body itself.
+// A request it could not authenticate is therefore let through with the reason
+// recorded on the context, and the Twirp hook and the Connect interceptor
+// installed here turn that into a coded error before the handler runs: a
+// missing authorization is unauthenticated, an invalid one is permission
+// denied, exactly as before.
 func (so *ServiceOptions) SetAuthInfoValidation(
 	parser AuthInfoParser, requireAuth ServiceAuth,
 ) {
 	so.AuthMiddleware = func(
 		w http.ResponseWriter, r *http.Request, next http.Handler,
 	) error {
-		ctx, _ := twirp.WithHTTPRequestHeaders(
-			r.Context(),
-			http.Header{
-				"Authorization": r.Header["Authorization"],
-			},
-		)
+		ctx := authenticateRequest(r.Context(), parser, requireAuth,
+			r.Header.Get("Authorization"))
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 
@@ -506,37 +617,7 @@ func (so *ServiceOptions) SetAuthInfoValidation(
 
 	hooks := twirp.ServerHooks{
 		RequestRouted: func(ctx context.Context) (context.Context, error) {
-			headers, ok := twirp.HTTPRequestHeaders(ctx)
-			if !ok {
-				return ctx, twirp.InternalError(
-					"missing HTTP header context information")
-			}
-
-			auth, err := parser.AuthInfoFromHeader(headers.Get("Authorization"))
-
-			switch {
-			case errors.Is(err, ErrNoAuthorization):
-				if requireAuth {
-					return ctx, twirp.Unauthenticated.Error(
-						"authentication required")
-				}
-			case err != nil:
-				return ctx, twirp.PermissionDenied.Errorf(
-					"invalid authorization: %v", err)
-			case auth == nil:
-				return ctx, twirp.InternalError(
-					"invalid auth info parser response")
-			}
-
-			if auth != nil {
-				ctx = SetAuthInfo(ctx, auth)
-
-				SetLogMetadata(ctx,
-					LogKeySubject, auth.Claims.Subject,
-				)
-			}
-
-			return ctx, nil
+			return ctx, rpc.ToTwirp(auth.GetError(ctx))
 		},
 	}
 
@@ -545,4 +626,56 @@ func (so *ServiceOptions) SetAuthInfoValidation(
 	} else {
 		so.Hooks = &hooks
 	}
+
+	so.Interceptors = append(so.Interceptors, authErrorInterceptor())
+}
+
+// authenticateRequest parses the authorization header and returns a context
+// that either carries the caller's AuthInfo or the reason it does not.
+func authenticateRequest(
+	ctx context.Context,
+	parser AuthInfoParser, requireAuth ServiceAuth,
+	authorization string,
+) context.Context {
+	info, err := parser.AuthInfoFromHeader(authorization)
+
+	switch {
+	case errors.Is(err, ErrNoAuthorization):
+		if requireAuth {
+			return auth.SetError(ctx,
+				rpc.Unauthenticated("authentication required"))
+		}
+
+		return ctx
+	case err != nil:
+		return auth.SetError(ctx, rpc.Errorf(
+			connect.CodePermissionDenied,
+			"invalid authorization: %v", err))
+	case info == nil:
+		return auth.SetError(ctx, rpc.Internalf(
+			"invalid auth info parser response"))
+	}
+
+	ctx = SetAuthInfo(ctx, info)
+
+	SetLogMetadata(ctx, LogKeySubject, info.Claims.Subject)
+
+	return ctx
+}
+
+// authErrorInterceptor fails a Connect call that the authentication middleware
+// could not authenticate, with the error the middleware recorded.
+func authErrorInterceptor() connect.Interceptor {
+	return connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
+		return func(
+			ctx context.Context, req connect.AnyRequest,
+		) (connect.AnyResponse, error) {
+			err := auth.GetError(ctx)
+			if err != nil {
+				return nil, err
+			}
+
+			return next(ctx, req)
+		}
+	})
 }

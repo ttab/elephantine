@@ -13,6 +13,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jellydator/ttlcache/v3 v3.4.1
 	github.com/julienschmidt/httprouter v1.3.0
+	github.com/magefile/mage v1.17.2
 	github.com/prometheus/client_golang v1.24.1
 	github.com/ryanuber/go-glob v1.0.0
 	github.com/ttab/mage v0.11.2
@@ -20,7 +21,7 @@ require (
 	github.com/urfave/cli/v3 v3.10.1
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.22.0
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
@@ -42,7 +43,6 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
-	github.com/magefile/mage v1.17.2 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
@@ -55,3 +55,6 @@ require (
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
+
+// TODO: pin to a pushed commit
+replace github.com/ttab/mage => /home/hugowett/Projects/mage

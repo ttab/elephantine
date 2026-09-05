@@ -6,6 +6,11 @@ import (
 	"github.com/twitchtv/twirp"
 )
 
+// IsTwirpError checks that the error is a Twirp error with the given code.
+//
+// Deprecated: use [IsRPCError], which takes a connect.Code and accepts both
+// error types, so the check does not have to change with the client
+// constructor.
 func IsTwirpError(
 	t TestingT, err error, code twirp.ErrorCode,
 ) {
