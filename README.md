@@ -120,6 +120,12 @@ path, handler := repositoryconnect.NewDocumentsServiceHandler(
 server.RegisterConnect(path, handler, opt)
 ```
 
+The plaintext listener serves HTTP/1.1 and HTTP/2 side by side, told apart by
+the HTTP/2 connection preface, which is what makes gRPC reachable without TLS:
+Go negotiates HTTP/2 through the TLS ALPN handshake and nowhere else, so a
+listener that does not say so answers HTTP/1.1 only and a gRPC client cannot
+connect to it at all.
+
 `NewDefaultServiceOptions` fills in both stacks, so a service gets logging,
 metrics and authentication parity by construction. A service whose handlers
 still return Twirp errors adds `rpc.LegacyTwirpErrors()` to

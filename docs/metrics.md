@@ -104,7 +104,7 @@ protocols reports one set of series whichever stack registers first.
 
 | Metric | Labels | What a change means |
 |---|---|---|
-| `rpc_requests_total` | `service`, `method`, `customer` | Requests received. A drop for a method that normally sees steady traffic is a caller that has stopped calling, or an ingress that has stopped routing. |
+| `rpc_requests_total` | `service`, `method`, `customer` | Requests that reached a handler. A drop for a method that normally sees steady traffic is a caller that has stopped calling, or an ingress that has stopped routing. A call refused by authentication is counted as a response and not as a request, on both stacks, so a gap between the two series is callers being turned away at the door. |
 | `rpc_duration_seconds` | `service`, `method`, `customer` | Handler runtime. A rising high percentile on one method is that method's dependency, not the service as a whole. |
 | `rpc_responses_total` | `service`, `method`, `status`, `customer` | Responses by HTTP status. Note that Connect answers `failed_precondition` with `400` where Twirp answered `412`, so a lock conflict is not visible as a status any more. |
 | `rpc_protocol_responses_total` | `service`, `method`, `protocol`, `code` | Responses by protocol and RPC code. `protocol="twirp"` going to zero for a method is what says its Twirp mount can be removed; a rising `code` share is the error breakdown `rpc_responses_total` cannot give, since several codes share a status. |

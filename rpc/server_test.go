@@ -419,6 +419,16 @@ func TestDualStackMetrics(t *testing.T) {
 		test.MustNotf(t, err, "get an error from Fail over %s", name)
 	}
 
+	// A call that never reaches a handler is a response and not a request,
+	// on both stacks. The Twirp hooks have always reported it that way, so
+	// the Connect interceptor does too.
+	for name, client := range s.Clients("") {
+		_, err := client.Echo(t.Context(),
+			&testservice.EchoRequest{Message: echoMessage})
+		test.MustNotf(t, err,
+			"get an error from an unauthenticated call over %s", name)
+	}
+
 	err := testutil.GatherAndCompare(s.Registry, strings.NewReader(`
 # HELP rpc_requests_total Number of RPC requests received.
 # TYPE rpc_requests_total counter
@@ -431,6 +441,7 @@ rpc_requests_total{customer="acme",method="Fail",service="Test"} 2
 # HELP rpc_responses_total Number of RPC responses sent.
 # TYPE rpc_responses_total counter
 rpc_responses_total{customer="acme",method="Echo",service="Test",status="200"} 2
+rpc_responses_total{customer="acme",method="Echo",service="Test",status="401"} 2
 rpc_responses_total{customer="acme",method="Fail",service="Test",status="404"} 2
 `), "rpc_responses_total")
 	test.Mustf(t, err, "count the responses with the same labels on both stacks")
@@ -442,8 +453,48 @@ rpc_protocol_responses_total{code="not_found",method="Fail",protocol="connect",s
 rpc_protocol_responses_total{code="not_found",method="Fail",protocol="twirp",service="Test"} 1
 rpc_protocol_responses_total{code="ok",method="Echo",protocol="connect",service="Test"} 1
 rpc_protocol_responses_total{code="ok",method="Echo",protocol="twirp",service="Test"} 1
+rpc_protocol_responses_total{code="unauthenticated",method="Echo",protocol="connect",service="Test"} 1
+rpc_protocol_responses_total{code="unauthenticated",method="Echo",protocol="twirp",service="Test"} 1
 `), "rpc_protocol_responses_total")
 	test.Mustf(t, err, "count the responses per protocol and code")
+}
+
+// TestConnectGRPC checks that the plaintext listener really serves gRPC, which
+// is only true because it enables HTTP/2 without TLS: Go negotiates HTTP/2
+// through the TLS ALPN handshake and nowhere else, so a listener that does not
+// say so speaks HTTP/1.1 and gRPC cannot be spoken to it.
+func TestConnectGRPC(t *testing.T) {
+	s := newStack(t, testImpl{}, elephantine.ServiceAuthRequired)
+
+	var transport http.Transport
+
+	transport.Protocols = new(http.Protocols)
+	transport.Protocols.SetUnencryptedHTTP2(true)
+
+	client := http.Client{
+		Transport: &bearerTransport{
+			token: s.Token,
+			next:  &transport,
+		},
+	}
+
+	grpc := testserviceconnect.NewTestServiceClient(
+		&client, "http://"+s.Addr, connect.WithGRPC())
+
+	res, err := grpc.Echo(t.Context(),
+		&testservice.EchoRequest{Message: echoMessage})
+	test.Mustf(t, err, "call Echo over gRPC")
+
+	test.Equalf(t, echoMessage, res.GetMessage(), "echo the message")
+	test.Equalf(t, "user://test/hugo", res.GetSubject(),
+		"authenticate the caller over gRPC too")
+
+	err = testutil.GatherAndCompare(s.Registry, strings.NewReader(`
+# HELP rpc_protocol_responses_total `+protocolResponsesHelp+`
+# TYPE rpc_protocol_responses_total counter
+rpc_protocol_responses_total{code="ok",method="Echo",protocol="grpc",service="Test"} 1
+`), "rpc_protocol_responses_total")
+	test.Mustf(t, err, "report the response under the gRPC protocol")
 }
 
 // protocolResponsesHelp is the help text of rpc_protocol_responses_total, which

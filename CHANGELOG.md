@@ -21,6 +21,16 @@ handler that read the `Authorization` header back out of the Twirp context with
 `twirp.HTTPRequestHeaders` no longer finds it, and reads `GetAuthInfo(ctx)`
 instead.
 
+**Behaviour change (the plaintext listener):** `APIServer` serves HTTP/2
+without TLS alongside HTTP/1.1 on its plain listener, which is what makes the
+gRPC protocol Connect mounts on the same path actually reachable: Go negotiates
+HTTP/2 through the TLS ALPN handshake and nowhere else, so the listener
+answered HTTP/1.1 only before and a gRPC client could not connect. The two
+protocols are told apart by the HTTP/2 connection preface, so Twirp, SSE, the
+websocket upgrade and every other HTTP/1.1 caller are unaffected. An ingress or
+proxy in front of the service still has to be configured for HTTP/2 before a
+gRPC caller can reach it from outside.
+
 **Behaviour change (RPC metrics):** `rpc_requests_total`,
 `rpc_duration_seconds` and `rpc_responses_total` keep their names, labels, help
 texts and label values, but the collectors are now declared once and shared
@@ -76,6 +86,13 @@ Changes:
   `fmt.Errorf("get the document: %w", twirp.NotFoundError("..."))` answered
   `internal` with the wrapped message before, and answers `not_found` with the
   Twirp error's own message now.
+- A call that authentication refuses is counted in `rpc_responses_total` and
+  `rpc_protocol_responses_total` but not in `rpc_requests_total`, on the Connect
+  stack as well as the Twirp one. The Twirp hooks have always reported it that
+  way, since the metrics hook increments the counter from `RequestRouted` and
+  the authentication hook chained ahead of it stops the chain; the Connect
+  interceptor now matches, so the difference between the two series means the
+  same thing whichever protocol the caller used.
 - `APIServer.RegisterConnect(path, handler, opt)` mounts a Connect handler
   behind the same authentication middleware as the Twirp services, and
   `ServiceOptions.HandlerOptions()` is the Connect counterpart of

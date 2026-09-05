@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/ttab/elephantine/internal/auth"
 	"github.com/ttab/elephantine/internal/rpcmetrics"
 )
 
@@ -50,6 +51,10 @@ func WithMetricsStaticTestLatency(latency time.Duration) MetricsOption {
 // canceled, deadline_exceeded and failed_precondition is not the status Twirp
 // answered with. rpc_protocol_responses_total is the series to read the error
 // breakdown from instead, since it carries the RPC code itself.
+//
+// A call that failed authentication is counted as a response but not as a
+// request, which is also what the hooks report, so the difference between the
+// two series means the same thing on both stacks.
 func MetricsInterceptor(
 	reg prometheus.Registerer, opts ...MetricsOption,
 ) (connect.Interceptor, error) {
@@ -78,8 +83,17 @@ func MetricsInterceptor(
 				start           = time.Now()
 			)
 
-			metrics.Requests.WithLabelValues(
-				service, method, customer).Inc()
+			// A call the authentication middleware refused is not
+			// counted as a request, only as a response. That is
+			// what the Twirp stack reports: its metrics hook
+			// increments the counter from RequestRouted, which
+			// twirp.ChainHooks never reaches once the
+			// authentication hook ahead of it has returned an
+			// error.
+			if auth.GetError(ctx) == nil {
+				metrics.Requests.WithLabelValues(
+					service, method, customer).Inc()
+			}
 
 			res, err := next(ctx, req)
 
