@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package testrpc.v1;
+
+import "testrpc/v1/types.proto";
+
+// The go_package is overridden per variant by the golden test, which
+// generates this fixture once with interface=false and once with
+// interface=true.
+option go_package = "github.com/ttab/elephantine/cmd/protoc-gen-elephant-rpc/testdata/testrpc/v1;testrpcv1";
+
+// Documents is the service that stores and retrieves documents. The comment
+// is here to check that a service level doc comment ends up on the generated
+// interface, the way protoc-gen-twirp puts it there.
+service Documents {
+  // Get retrieves a document version.
+  rpc Get(GetRequest) returns (GetResponse);
+  // Update creates a new version of a document. The comment runs over more
+  // than one line so that the fixture covers a multi-line doc comment being
+  // carried over verbatim.
+  rpc Update(UpdateRequest) returns (UpdateResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+}
+
+// Schemas manages the document schemas.
+service Schemas {
+  // Register adds a schema version.
+  rpc Register(RegisterSchemaRequest) returns (RegisterSchemaResponse);
+  // List returns the registered schemas.
+  rpc List(ListSchemasRequest) returns (ListSchemasResponse);
+}
+
+message GetRequest {
+  string uuid = 1;
+  int64 version = 2;
+}
+
+message GetResponse {
+  Document document = 1;
+}
+
+message UpdateRequest {
+  Document document = 1;
+}
+
+message UpdateResponse {
+  int64 version = 1;
+}
+
+message DeleteRequest {
+  string uuid = 1;
+}
+
+message DeleteResponse {}
+
+message RegisterSchemaRequest {
+  Schema schema = 1;
+}
+
+message RegisterSchemaResponse {}
+
+message ListSchemasRequest {}
+
+message ListSchemasResponse {
+  repeated Schema schemas = 1;
+}

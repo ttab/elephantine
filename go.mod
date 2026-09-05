@@ -3,6 +3,7 @@ module github.com/ttab/elephantine
 go 1.27.0
 
 require (
+	connectrpc.com/connect v1.20.0
 	github.com/MicahParks/keyfunc/v3 v3.8.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-cmp v0.7.0

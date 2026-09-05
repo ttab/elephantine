@@ -36,6 +36,61 @@ Shared functionality for Elephant systems. It's most likely not something anyone
 - Golden file testing for JSON and protobuf
 - Test helpers for JWT auth, Twirp services, and structured logging
 
+### `cmd/protoc-gen-elephant-rpc` — Connect adapters
+
+- A protobuf compiler plugin that generates the adapters that let a service keep the plain interface Twirp gives it while serving Connect, and the interface itself once Twirp generation stops. See [Generating the RPC adapters](#generating-the-rpc-adapters)
+
+## Generating the RPC adapters
+
+`protoc-gen-elephant-rpc` keeps the plain service interface —
+`Get(ctx, *GetRequest) (*GetResponse, error)`, the one `protoc-gen-twirp`
+generates — as the contract a service implements and a client is handed, with
+Connect underneath. It is run through buf, at a version `github.com/ttab/mage`
+pins, alongside `protoc-gen-go` and `protoc-gen-connect-go`:
+
+```json
+{
+  "version": "v2",
+  "plugins": [
+    {"local": ["go", "run", "github.com/ttab/elephantine/cmd/protoc-gen-elephant-rpc@v0.29.0"], "out": "."}
+  ]
+}
+```
+
+For each service in a file it writes `<proto base>.elephant.go` into the
+`<pkg>connect` package `protoc-gen-connect-go` generates, next to
+`<proto base>.connect.go`, holding two constructors:
+
+- `New<Service>ServiceHandler(svc <pkg>.<Service>, opts ...connect.HandlerOption) (string, http.Handler)` serves an implementation of the plain interface over Connect, and returns the path to mount it on together with the handler, like `New<Service>Handler` does
+- `New<Service>ServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) <pkg>.<Service>` is a client with that same plain interface, so it is a drop-in for `New<Service>ProtobufClient`
+
+Errors pass through both adapters untouched, so an implementation that wants to
+control the response code returns a `*connect.Error`.
+
+The options, given as `opt` entries in the buf template:
+
+| Option | Default | Effect |
+|---|---|---|
+| `package_suffix` | `connect` | The suffix `protoc-gen-connect-go` generates with. The adapters go into the same package, so the two have to agree |
+| `interface` | `false` | Also emit the plain interface itself into the message package, as `<proto base>.rpc.go`. Turn it on the day `protoc-gen-twirp` stops generating it: the name, method set, signatures and doc comments are the ones Twirp emits, so implementations compile unchanged |
+
+Only unary RPCs are supported — a streaming method fails generation with an
+error naming it, since a stream has no place in the plain interface.
+
+The generated code imports `connectrpc.com/connect`, `context`, `net/http` and
+the message package, and nothing else. It never imports elephantine, so a
+declarations module like `elephant-api` can generate with this plugin without
+taking on elephantine's dependencies; header propagation on the client side
+comes from an interceptor the caller passes in rather than from the generated
+client.
+
+`cmd/protoc-gen-elephant-rpc/testdata` holds a fixture proto generated with
+both settings of `interface`, committed and compared by
+`go test ./cmd/protoc-gen-elephant-rpc`. Run that test with `REGENERATE=true`
+after changing the plugin, and note that the generated fixture packages are
+compiled by the test rather than by `go build ./...`, since the go command
+skips `testdata`.
+
 ## CORS and request bodies
 
 `APIServer` wraps the request mux in the CORS middleware and a request body

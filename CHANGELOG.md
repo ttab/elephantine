@@ -4,6 +4,32 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
+## [v0.29.0] - Unreleased
+
+Changes:
+
+- `cmd/protoc-gen-elephant-rpc` is a protobuf compiler plugin that keeps the
+  plain service interface — `Get(ctx, *GetRequest) (*GetResponse, error)`, the
+  one `protoc-gen-twirp` generates — available on top of Connect. For every
+  service it emits `New<Service>ServiceHandler(svc, opts...) (string,
+  http.Handler)` and `New<Service>ServiceClient(httpClient, baseURL, opts...)`
+  into the `<pkg>connect` package `protoc-gen-connect-go` generates, so an
+  implementation written against the plain interface is served over Connect,
+  and a caller gets the same interface `New<Service>ProtobufClient` returns
+  today. Errors are passed through untouched in both directions.
+- The plugin's `interface=true` option also emits the plain interface itself,
+  into the message package and with the name, method set, signatures and doc
+  comments Twirp gives it, for the day Twirp generation is switched off. It is
+  off by default. `package_suffix` mirrors the `protoc-gen-connect-go` option
+  of the same name, and a streaming RPC fails generation with an error naming
+  the method: only unary methods can have a plain interface.
+- The plugin is run through buf as `go run
+  github.com/ttab/elephantine/cmd/protoc-gen-elephant-rpc@<version>` at a
+  version `github.com/ttab/mage` pins, so a repository that generates with it
+  gains no dependency on elephantine. The code it emits imports only
+  `connectrpc.com/connect`, `context`, `net/http` and the message package,
+  which is what keeps `elephant-api` free of elephantine.
+
 ## [v0.28.0] - 2026-09-04
 
 **Behaviour change (request bodies):** `APIServer` now caps request bodies at

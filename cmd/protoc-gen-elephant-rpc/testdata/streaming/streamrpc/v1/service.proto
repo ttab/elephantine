@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package streamrpc.v1;
+
+option go_package = "github.com/ttab/elephantine/cmd/protoc-gen-elephant-rpc/testdata/streaming/streamrpc/v1;streamrpcv1";
+
+// Events is a fixture for the streaming check: the plain interface has no
+// room for a stream, so generation must fail and name the method.
+service Events {
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Follow(FollowRequest) returns (stream Event);
+}
+
+message GetRequest {}
+
+message GetResponse {}
+
+message FollowRequest {}
+
+message Event {
+  string id = 1;
+}
