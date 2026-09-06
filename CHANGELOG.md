@@ -102,6 +102,11 @@ Changes:
 - `rpc.WithOutgoingHeaders(ctx, h)` and the `rpc.PropagateHeaders()` client
   interceptor replace `twirp.WithHTTPRequestHeaders` for the callers that set
   per-call headers.
+- Documentation for driving the migration lives here: `docs/connect.md` is the
+  fleet reference for serving, calling, testing and generating Connect,
+  `docs/migration-service.md` the per-service playbook and
+  `docs/migration-client.md` the per-client one. The master plan and the
+  record of decisions stay in `CONNECT_MIGRATION.md` in elephant-repository.
 - `test.IsRPCError(t, err, code)` accepts either error type, and
   `test.ErrorParity(t, twirpErr, connectErr)` asserts that the same call
   answered the two stacks with the same code, message and metadata, which is

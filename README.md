@@ -10,7 +10,7 @@ Shared functionality for Elephant systems. It's most likely not something anyone
 
 - **HTTP/API server** — production-ready server with graceful shutdown, TLS, CORS (with public, CDN-friendly path prefixes), request body limits, health/readiness probes, and pprof
 - **JWT & OIDC** — JWT claims parsing, OIDC discovery, and OAuth2 client credentials
-- **RPC** — protocol-neutral authentication middleware, and the Twirp hooks and Connect interceptors that give a service the same logging, metrics and error behaviour on both stacks. See [Serving Connect and Twirp](#serving-connect-and-twirp)
+- **RPC** — protocol-neutral authentication middleware, and the Twirp hooks and Connect interceptors that give a service the same logging, metrics and error behaviour on both stacks. See [Serving Connect and Twirp](#serving-connect-and-twirp) below, and [docs/connect.md](docs/connect.md) for the fleet-wide reference
 - **HTTP client** — configurable client with timeouts, connection limits, oauth2 token injection, and Prometheus instrumentation
 - **Graceful shutdown** — signal-based (SIGINT/SIGTERM) shutdown coordination
 - **Error groups** — panic-recovering error groups with retry and backoff support, restarts are counted in the `task_restarts_total` metric
@@ -98,6 +98,13 @@ compiled by the test rather than by `go build ./...`, since the go command
 skips `testdata`.
 
 ## Serving Connect and Twirp
+
+This section is the API tour. [docs/connect.md](docs/connect.md) is the fleet
+reference for how Connect is served, called, tested and generated, and the
+migration playbooks are [docs/migration-service.md](docs/migration-service.md)
+(moving a service, step by step) and
+[docs/migration-client.md](docs/migration-client.md) (moving a Go, TypeScript
+or raw HTTP client).
 
 A service implements the plain protobuf interface — `Get(ctx, *GetRequest)
 (*GetResponse, error)` — once, and mounts it on both protocols. Twirp serves
