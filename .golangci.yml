@@ -56,8 +56,6 @@ linters:
         - embedlit
     nestif:
       min-complexity: 6
-      replace-allow-list:
-        - github.com/ttab/mage
     wrapcheck:
       extra-ignore-sigs:
         - elephantine.InvalidArgumentf(
