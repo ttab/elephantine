@@ -44,6 +44,32 @@ that read the `Authorization` header back out of the Twirp context with
 `twirp.HTTPRequestHeaders` no longer finds it, and reads `GetAuthInfo(ctx)`
 instead.
 
+**Wire format (Connect JSON field names):** a Connect JSON response spells its
+fields in lowerCamelCase (`documentUuid`), where a Twirp JSON response spells
+them the way the `.proto` declares them (`document_uuid`). Connect's codec is
+`protojson` with its default options and Twirp's sets `UseProtoNames`; nothing
+else about the encoding differs, and both stacks still omit unpopulated fields.
+The `ServiceOptions.JSONSkipDefaults` documentation said the two stacks produced
+the same JSON, which was only ever true of that omission.
+
+It reaches the callers that read JSON by hand, with `fetch` or `curl`: one that
+changes only the path prefix gets a `200` and reads `undefined` for every
+multi-word field. Generated clients — Go, `@protobuf-ts`, `connect-es` — are
+unaffected, and requests are unaffected on both stacks, since `protojson`
+accepts either spelling when unmarshalling. This is deliberate: the standard
+encoding is what every Connect runtime and every generated client assumes, so a
+service must not install a `UseProtoNames` codec to make Connect look like
+Twirp. Pin it with a success-body golden per stack instead.
+
+**Behaviour change (request bodies over the limit):** the two stacks answer a
+body that streams past `DefaultMaxBodyBytes` differently. A request that
+declares a larger `Content-Length` is still refused with a plain `413` on both,
+before either framework sees it, but a chunked request, or one that lies about
+its length, fails on the read that passes the limit: Twirp answers `malformed`
+with `400` and Connect answers `resource_exhausted` with `429`. Neither is a
+handler error, so a service cannot normalise them; a client that has to tell
+"too big" from "too many" reads the status and the code together.
+
 **Behaviour change (RPC metrics):** `rpc_requests_total`,
 `rpc_duration_seconds` and `rpc_responses_total` keep their names, labels, help
 texts and label values, but the collectors are now declared once and shared
@@ -87,13 +113,25 @@ used to count a refused call as a request as well.
 
 **Behaviour change (the plaintext listener):** `APIServer` serves HTTP/2
 without TLS alongside HTTP/1.1 on its plain listener, which is what makes the
-gRPC protocol Connect mounts on the same path actually reachable: Go negotiates
+gRPC protocol Connect mounts on the same path reachable at all: Go negotiates
 HTTP/2 through the TLS ALPN handshake and nowhere else, so the listener
 answered HTTP/1.1 only before and a gRPC client could not connect. The two
 protocols are told apart by the HTTP/2 connection preface, so Twirp, SSE, the
-websocket upgrade and every other HTTP/1.1 caller are unaffected. An ingress or
-proxy in front of the service still has to be configured for HTTP/2 before a
-gRPC caller can reach it from outside.
+websocket upgrade and every other HTTP/1.1 caller are unaffected.
+
+**gRPC and gRPC-Web are reachable inside the cluster only.** They are served on
+the Connect paths and are a supported way for one service to call another, but
+the fleet's ingress speaks HTTP/1.1 to its targets, and a gRPC target group per
+service — its own listener, host and health check — was judged more work than
+the benefit is worth. So no elephant API offers gRPC externally, none is
+documented as doing so, and gRPC-Web is not a browser protocol here: its errors
+arrive as trailers, and the CORS defaults deliberately expose no headers for
+reading them. A browser client uses Connect. External access stays open as a
+later iteration.
+
+A service that mounts Connect on an `http.Server` of its own, rather than on
+`APIServer`, has to set the same `http.Protocols` itself; without it gRPC
+cannot be spoken to that listener even from inside the cluster.
 
 **Behaviour change (CORS):** the default allowed request headers gain
 `Connect-Protocol-Version` and `Connect-Timeout-Ms`, which a browser Connect
@@ -128,12 +166,7 @@ Changes:
   which `ServiceOptions.ServerOptions` now always installs, is what lets a
   handler that returns Connect errors answer a Twirp caller unchanged, and
   `rpc.LegacyTwirpErrors` is the transitional interceptor for a service that
-  serves Connect before its handlers have moved. Note that the interceptor
-  finds a Twirp error anywhere in the error tree, where the generated Twirp
-  server only recognised one returned bare: a handler that returned
-  `fmt.Errorf("get the document: %w", twirp.NotFoundError("..."))` answered
-  `internal` with the wrapped message before, and answers `not_found` with the
-  Twirp error's own message now.
+  serves Connect before its handlers have moved.
 - A call that authentication refuses is counted in `rpc_responses_total` and
   `rpc_protocol_responses_total` but not in `rpc_requests_total`, whichever
   protocol the caller used, so the difference between the two series means the

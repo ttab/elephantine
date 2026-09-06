@@ -23,6 +23,22 @@ Check the shared dependencies are released with what you need:
 - If the service serves elephant-api services: an `elephant-api` release with
   the `<pkg>connect` packages.
 
+The shared repositories have to be tagged in one order, because mage and
+elephantine each depend on the other: mage's `rpc` namespace runs the plugin
+that lives in elephantine, and elephantine's own magefile imports
+`github.com/ttab/mage/rpc`. The order is
+
+1. tag `ttab/mage`, with the plugin pin still a pseudo-version;
+2. tag `elephantine`;
+3. repoint mage's plugin pin at that tag and tag `ttab/mage` again;
+4. bump, regenerate and tag the API declaration modules (`elephant-api`,
+   `elephant-tt-api`, `elephant-public-api`, `bifrost-api`);
+5. open the first service pull request.
+
+Nothing is tagged out of that order. Until a step is done, the modules after it
+carry pseudo-versions of branch commits, and a force-push of either branch
+orphans the other's pin, so no service may depend on them.
+
 Inventory the service:
 
 ```sh
@@ -71,6 +87,17 @@ nothing in a handler has changed.
    service that registered its own copies has to stop.
 4. **CORS.** If the service configures allowed headers itself, add
    `Connect-Protocol-Version` and `Connect-Timeout-Ms`.
+
+   `Connect-Timeout-Ms` is not only a header to allow: connect-go turns it into
+   the handler's context deadline and enforces it, where Twirp ignored client
+   deadlines entirely. A handler that waits — a long poll, an eventlog tail —
+   should look at why its wait ended and answer `deadline_exceeded` when the
+   context deadline is what ended it, keeping `canceled` for a caller that went
+   away. A handler that returns `canceled` for both answers a client that set a
+   timeout with `499` where the call actually timed out, and the metrics and
+   the logs say the same wrong thing. Check the numbers while you are there: a
+   long-poll wait that is longer than the load balancer's idle timeout races
+   the load balancer whatever the handler does.
 5. **Tests.** Make the API test suite run against both stacks: a switch in the
    test context that builds either the Twirp protobuf client or the
    `New<Service>ServiceClient` adapter with the bearer token attached the same
@@ -78,18 +105,29 @@ nothing in a handler has changed.
    with a per-test override. Replace `test.IsTwirpError` with
    `test.IsRPCError`. Run the suite both ways and fix what the Connect run
    surfaces. Add the second run to CI.
+
+   Pin the wire shape with golden files, **a success body per stack as well as
+   the error bodies**. The two success bodies are not the same document: Twirp
+   spells the fields as the `.proto` declares them and Connect spells them in
+   lowerCamelCase, which is the difference a raw-`fetch` caller trips over, and
+   a golden per stack is what keeps it a stated fact rather than a discovery.
+   Pick a response with a multi-word field and a nested message.
 6. **Documentation, same PR.** Architecture or API documentation: both path
-   families, the protocols served (Connect, gRPC, gRPC-Web on the Connect
-   paths), the error body shapes and `ErrorMeta`, the three status
-   differences. Permissions documentation: the Connect paths sit behind the
-   same middleware and scope checks. Observability documentation:
+   families; the protocols served, which are Connect from outside and gRPC and
+   gRPC-Web on the same paths inside the cluster only; the error body shapes
+   and `ErrorMeta`; the three status differences; and that a Connect JSON
+   response spells its fields in lowerCamelCase where Twirp spelled them as the
+   `.proto` declares them. Permissions documentation: the Connect paths sit
+   behind the same middleware and scope checks. Observability documentation:
    `rpc_protocol_responses_total` and what a change in it means, and the
    `status` label shift for `failed_precondition`. Anywhere `/twirp/` is
    named as the API. The project CLAUDE.md, if it states API facts.
 7. **CHANGELOG.** A lead-in paragraph at the outermost tier, since this is new
    API surface: the Connect paths, the protocols, the error body, the three
-   status differences, and that Twirp is unchanged. Then the elephantine
-   behaviour changes that reach consumers, then bullets.
+   status differences, the JSON field names, and that Twirp is unchanged. Then
+   the elephantine behaviour changes that reach consumers — the authentication
+   middleware answering an invalid token with `401` rather than `403` is the
+   one every service inherits — then bullets.
 
 Done when: build, vet and lint are clean; `go test ./...` and
 `TEST_RPC_STACK=connect go test ./...` both pass; the Connect paths are
@@ -146,13 +184,22 @@ This is the long part. While the service is dual-stack:
   this service. Internal traffic on Twirp should reach zero long before the
   major release.
 - Identify external callers from the remaining Twirp traffic and the
-  `customer` label, and tell them before the major release which version
-  removes `/twirp/`.
+  `client_id` label on `rpc_protocol_responses_total`, which names the
+  application the token was issued to, and tell them before the major release
+  which version removes `/twirp/`.
 - New RPCs added during this period get both mounts automatically (the mount
   code registers a whole service, not a method) and are written with `rpc`
   errors from the start.
 
 ## Step 3: retire Twirp
+
+One prerequisite is not the service's own: `howdah` uses
+`twirp.WithHTTPRequestHeaders` as generic context plumbing for the bearer
+token, and eleven repositories import howdah and read it back. Until howdah
+carries the token in a context key of its own, with a shim that still sets the
+Twirp header for callers that have not moved, none of those modules can drop
+`twitchtv/twirp` however complete their own migration is. Check whether the
+service is one of them before promising that step 3 removes the dependency.
 
 In the service's next major release:
 

@@ -14,6 +14,22 @@
 // LegacyTwirpErrors to its Connect interceptors, which translates the other
 // way, and removes it in the pull request that flips the handlers.
 //
+// # Wrapping a coded error
+//
+// Do not. Both stacks find a coded error anywhere in the error tree, so the
+// code survives a wrapping, but nothing else does: the caller is answered with
+// the inner error's message, so the wrapper's prefix is written and never read,
+// and Meta and WithMeta look at the outermost coded error only. An error built
+// as Errorf(code, "load the document: %w", inner) therefore answers with the
+// outer code and the inner message, and reports no metadata even when inner
+// carried some.
+//
+// That last part is deliberate rather than an oversight: re-coding an error is
+// a decision about what the caller is told, and carrying the inner error's
+// metadata out under a different code would tell them something else. Put the
+// context in the message passed to the helper, and add the metadata the caller
+// should see with WithMeta.
+//
 // The package deliberately does not import the elephantine root package: the
 // root package's APIServer and ServiceOptions use these interceptors, so the
 // dependency runs the other way. The types both packages need are declared in

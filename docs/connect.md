@@ -40,9 +40,10 @@ interceptor and the Twirp test client. Nothing in the handlers changes.
 | | Twirp | Connect |
 |---|---|---|
 | Path | `POST /twirp/<pkg>.<Service>/<Method>` | `POST /<pkg>.<Service>/<Method>` |
-| Content types | `application/protobuf`, `application/json` | `application/proto`, `application/json`, plus gRPC and gRPC-Web selected by content type |
+| Content types | `application/protobuf`, `application/json` | `application/proto`, `application/json`, plus gRPC and gRPC-Web selected by content type (in-cluster only, see below) |
 | Request headers | `Authorization` | `Authorization`; clients also send `Connect-Protocol-Version: 1` and may send `Connect-Timeout-Ms`, neither required by the server |
 | Error body | `{"code":"not_found","msg":"…","meta":{"k":"v"}}` | `{"code":"not_found","message":"…","details":[{"type":"elephantine.rpc.ErrorMeta","value":"<base64>"}]}` |
+| JSON field names | the proto names, `{"document_uuid": "…"}` | protojson's lowerCamelCase, `{"documentUuid": "…"}` |
 | JSON defaults | omitted (`WithServerJSONSkipDefaults`) | omitted (protojson default) |
 
 The paths never overlap, so one server mounts both. Connect at the standard
@@ -50,9 +51,68 @@ root, no prefix (decision 2 in the master plan): every Connect client and proxy
 assumes it, and the generated `Procedure` constants say so. An ingress rule that
 routes on `/twirp/` needs a sibling rule for the unprefixed paths.
 
-`Connect-Timeout-Ms` becomes the handler's context deadline. A plain `curl`
-with `Content-Type: application/json` against the Connect path works without
-any Connect header.
+### JSON is standard Connect, not Twirp-aligned
+
+**A Connect response spells its fields differently from a Twirp response.**
+Twirp marshals with `protojson` and `UseProtoNames: true`, so a JSON response
+carries the field names the `.proto` declares (`document_uuid`, `created_at`).
+Connect's JSON codec is `protojson` with its default options, which spell the
+same fields in lowerCamelCase (`documentUuid`, `createdAt`). Nothing else about
+the encoding differs: both omit unpopulated fields, both render an enum as its
+name and a `google.protobuf.Timestamp` as an RFC 3339 string.
+
+Requests are unaffected: `protojson` unmarshalling accepts both spellings on
+both stacks, so a caller that keeps sending `document_uuid` to a Connect path
+is understood.
+
+Who this reaches: a caller that reads JSON responses by hand, with `fetch` or
+`curl`. The generated clients — Go, `@protobuf-ts`, `connect-es` — parse into
+the generated types and are not affected at all. A raw-`fetch` caller that
+changes only the path prefix will read `undefined` for every multi-word field,
+which is the failure to look for.
+
+This is deliberate (decision 9 in the master plan): a service must **not**
+install a `UseProtoNames` codec to make Connect look like Twirp. Every Connect
+runtime, every proxy that understands Connect and every piece of documentation
+assumes the standard encoding, and a service that deviates from it is a service
+whose clients cannot be generated from its `.proto` alone. The difference is
+documented and pinned instead — a service's parity tests carry a success-body
+golden per stack, so a change in either encoding is a visible diff.
+
+### Timeouts
+
+`Connect-Timeout-Ms` becomes the handler's context deadline, and connect-go
+enforces it: a call that outlives the header is answered `deadline_exceeded`
+(504), and the handler's `ctx` is done. Twirp had no timeout header and ignored
+the deadline entirely, so a long-poll RPC that a Connect client gives a deadline
+now ends differently from the way it ended for a Twirp caller. A handler that
+waits — an eventlog long poll is the case in the fleet — should return
+`deadline_exceeded` when the context deadline is what ended the wait, and
+`canceled` only when the caller went away; see
+[migration-service.md](migration-service.md#step-1-dual-stack-no-handler-changes).
+
+A plain `curl` with `Content-Type: application/json` against the Connect path
+works without any Connect header.
+
+### gRPC and gRPC-Web are in-cluster only
+
+Connect serves gRPC and gRPC-Web on the same paths, selected by content type,
+and the plaintext listener speaks HTTP/2 so that a gRPC client can reach it.
+**That reach ends at the cluster.** The fleet's ingress speaks HTTP/1.1 to its
+targets, and giving gRPC an externally reachable target group means a dedicated
+listener, host and health check per service, which was judged more work than the
+benefit is worth (decision 14 in the master plan). So:
+
+- Inside the cluster, service to service, gRPC and gRPC-Web work and are a
+  supported way to call an elephant service.
+- From outside, they are not reachable, are not documented in elephant-docs and
+  are not offered to customers. External access stays open as a later
+  iteration, not as a promise.
+- gRPC-Web is therefore **not** a browser protocol here. Its errors arrive as
+  trailers, which a browser cannot read cross-origin without
+  `Access-Control-Expose-Headers`, and `elephantine.CORSOptions` deliberately
+  does not set that: a browser client uses Connect, which is what
+  `@connectrpc/connect-web` speaks by default.
 
 ### Error codes and HTTP status
 
@@ -71,6 +131,30 @@ translated. The HTTP status is identical except:
 and workflow rules return it. Nothing should key on the status; read the code
 from the body, or from `rpc_protocol_responses_total{code=…}` in metrics.
 `rpc.HTTPStatus(code)` is the Connect mapping if a service needs it.
+
+Two statuses come from the framework rather than from a handler, and the two
+stacks differ:
+
+- **A request body over the limit.** `APIServer` caps request bodies at
+  `DefaultMaxBodyBytes` (8 MiB). A request that *declares* a larger
+  `Content-Length` is refused with a plain `413` on both stacks, before either
+  framework sees it. A request that lies about its length, or that is chunked,
+  fails on the read that passes the limit, and there the stacks part company:
+  Twirp answers `malformed` with `400`, Connect answers `resource_exhausted`
+  with `429`. Neither is a handler error, so neither is something a service can
+  normalise; a client that has to tell "too big" from "too many" reads the
+  status and the code together.
+- **A request that never names a method**, or that names one with a content
+  type the mount does not serve, is answered by the framework: Twirp as
+  `bad_route`, Connect as a bare `404` from the mux or a `415` with no body.
+  Neither reaches an interceptor or a hook on the Connect stack, which is why
+  [metrics.md](metrics.md#rpc-metrics) says those failures are uncounted there.
+
+An unauthenticated caller cannot reach any of that on a service that uses
+`SetAuthInfoValidation`: the authentication middleware answers first, before the
+body is read at all. That matters most on Connect, where connect-go unmarshals
+the request body before it runs an interceptor, so a fail-open middleware would
+have let an anonymous caller drive body parsing.
 
 ### Error metadata
 
@@ -113,10 +197,13 @@ identically by construction. `ServiceOptions.Interceptors` is the Connect
 chain, `HandlerOptions()` turns it into `connect.HandlerOption`s.
 
 The plaintext listener serves HTTP/1.1 and HTTP/2 side by side (Go's
-`http.Protocols` with unencrypted HTTP/2 on), which is what makes gRPC
-reachable without TLS. Twirp, SSE and websocket callers are unaffected. An
-ingress in front of the service still has to allow HTTP/2 to the backend before
-an external gRPC caller can reach it.
+`http.Protocols` with unencrypted HTTP/2 on), which is what makes gRPC reachable
+without TLS inside the cluster. The two are told apart by the HTTP/2 connection
+preface, so Twirp, SSE and websocket callers are unaffected. It does not make
+gRPC reachable from outside: the ingress speaks HTTP/1.1 to its targets, and
+external gRPC access is deliberately not provided (decision 14). A service that
+mounts Connect on its own `http.Server` has to set the same protocols itself, or
+gRPC cannot be spoken to it at all.
 
 ### With your own router
 
@@ -167,7 +254,13 @@ Handlers return `*connect.Error` through the `rpc` helpers and never import
 Rules that follow from the shape:
 
 - **Never wrap an RPC error.** `fmt.Errorf("get document: %w", rpc.NotFound(…))`
-  turns a coded error into an uncoded one. Return the helper's result as it is.
+  does not lose the code — both stacks find the coded error anywhere in the
+  tree, connect-go with `errors.As` and `rpc.ToTwirp` the same way — but it does
+  lose the wrapper. The caller is answered with the inner error's message, so
+  the "get document: " prefix is written and never read, and
+  `rpc.WithMeta(err, …)` on a wrapped error returns the inner `*connect.Error`
+  and drops the wrapping altogether. Return the helper's result as it is, and
+  put the context in the message you pass the helper.
 - **Every handler error carries a code.** A failed query, a marshalling
   failure, anything that is the server's fault, is returned as
   `rpc.Internalf("load document: %w", err)`, never as a bare `fmt.Errorf`. The
@@ -261,6 +354,9 @@ Two things the series do not cover, and one that changed:
 Browser Connect clients send `Connect-Protocol-Version` and
 `Connect-Timeout-Ms` on every call. `elephantine.CORSOptions` allows them by
 default; a service that replaced `AllowedHeaders` outright adds them itself.
+Nothing is exposed with `Access-Control-Expose-Headers`, which is what a browser
+gRPC-Web client would need to read the trailers its errors arrive in — that is
+deliberate, since gRPC-Web is in-cluster only and a browser uses Connect.
 
 ## Calling
 
@@ -347,11 +443,13 @@ A repository that imports a `.proto` from another module vendors it with
 `newsdoc/newsdoc.proto` from elephant-api. The target is idempotent, so CI can
 run it and `git diff --exit-code` reports drift.
 
-`protoc-gen-elephant-rpc` lives in this repository under `cmd/`. Until
-`ttab/mage` pins a released version of it, generation needs
-`ELEPHANT_RPC_PLUGIN=<path to an elephantine checkout>` or the adapters are
-silently left as they were. See the [README](../README.md#generating-the-rpc-adapters)
-for the plugin's options.
+`protoc-gen-elephant-rpc` lives in this repository under `cmd/`. `ttab/mage`
+pins the version it runs, and a missing pin fails generation rather than
+skipping the plugin, so the adapters cannot silently be left as they were.
+`ELEPHANT_RPC_PLUGIN=<path to an elephantine checkout>` runs the plugin from a
+working tree instead, which is what a change to the plugin itself is tested
+with. See the [README](../README.md#generating-the-rpc-adapters) for the
+plugin's options.
 
 The generated code imports only `connectrpc.com/connect`, `context`,
 `net/http` and the message package. It never imports elephantine, which is what

@@ -58,10 +58,15 @@ pins, alongside `protoc-gen-go` and `protoc-gen-connect-go`:
 {
   "version": "v2",
   "plugins": [
-    {"local": ["go", "run", "github.com/ttab/elephantine/cmd/protoc-gen-elephant-rpc@v0.29.0"], "out": "."}
+    {"local": ["go", "run", "github.com/ttab/elephantine/cmd/protoc-gen-elephant-rpc@<version>"], "out": "."}
   ]
 }
 ```
+
+`<version>` is not written out by hand: `github.com/ttab/mage/rpc` pins it and
+passes the template to buf, so a bump of `ttab/mage` is what moves the
+generator, exactly as an image tag was before. The template above is what that
+bump produces.
 
 For each service in a file it writes `<proto base>.elephant.go` into the
 `<pkg>connect` package `protoc-gen-connect-go` generates, next to
@@ -109,7 +114,9 @@ or raw HTTP client).
 A service implements the plain protobuf interface — `Get(ctx, *GetRequest)
 (*GetResponse, error)` — once, and mounts it on both protocols. Twirp serves
 `/twirp/<pkg>.<Service>/<Method>`, Connect serves `/<pkg>.<Service>/<Method>`
-plus gRPC and gRPC-Web on the same path, so the two mounts never collide.
+plus gRPC and gRPC-Web on the same path, so the two mounts never collide. gRPC
+and gRPC-Web are reachable inside the cluster only: the fleet's ingress speaks
+HTTP/1.1 to its targets and external gRPC access is deliberately not provided.
 
 ```go
 opt, err := elephantine.NewDefaultServiceOptions(
@@ -128,10 +135,12 @@ server.RegisterConnect(path, handler, opt)
 ```
 
 The plaintext listener serves HTTP/1.1 and HTTP/2 side by side, told apart by
-the HTTP/2 connection preface, which is what makes gRPC reachable without TLS:
-Go negotiates HTTP/2 through the TLS ALPN handshake and nowhere else, so a
-listener that does not say so answers HTTP/1.1 only and a gRPC client cannot
-connect to it at all.
+the HTTP/2 connection preface, which is what makes gRPC reachable without TLS
+from inside the cluster: Go negotiates HTTP/2 through the TLS ALPN handshake and
+nowhere else, so a listener that does not say so answers HTTP/1.1 only and a
+gRPC client cannot connect to it at all. It does not make gRPC reachable from
+outside; the ingress speaks HTTP/1.1 to its targets and no gRPC target group is
+provided.
 
 `NewDefaultServiceOptions` fills in both stacks, so a service gets logging,
 metrics and authentication parity by construction. A service whose handlers

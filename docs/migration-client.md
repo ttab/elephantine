@@ -48,7 +48,9 @@ tests pass, and `twitchtv/twirp` is gone from `go.mod` or accounted for.
 and `@connectrpc/connect-web`, published under a separate entry point so the
 browser clients can move one shared client file at a time. `elephantine`'s
 `rpc/errormeta.proto` is copied into the package like the other protos so the
-`ErrorMeta` message type exists on the TypeScript side.
+`ErrorMeta` message type exists on the TypeScript side — which needs a second
+clone in the package's update workflow, since it clones `elephant-api` and
+nothing else today.
 
 Per shared client file (`shared/Repository.ts`, `shared/Index.ts`, ...):
 
@@ -70,12 +72,27 @@ Change the path prefix, rename the error field, and read meta from the detail:
 |---|---|---|
 | URL | `POST <base>/twirp/<pkg>.<Service>/<Method>` | `POST <base>/<pkg>.<Service>/<Method>` |
 | Headers | `Content-Type: application/json` | `Content-Type: application/json` (`Connect-Protocol-Version: 1` optional) |
+| Response field names | the proto names, `{"document_uuid": "…"}` | lowerCamelCase, `{"documentUuid": "…"}` |
 | Error body | `{"code","msg","meta"}` | `{"code","message","details":[{"type":"elephantine.rpc.ErrorMeta","value":"<base64>","debug":{"meta":{…}}}]}` |
 | Status | as before | `failed_precondition` is 400 not 412; read the code from the body |
 
-The request body is unchanged: protobuf JSON is protobuf JSON on both. A caller
-that inspected HTTP status codes instead of the body's `code` has to switch to
-the code; it is the same string on both stacks.
+**The response field names are the part that breaks quietly.** Twirp marshals
+with protojson's `UseProtoNames`, so a response spells its fields the way the
+`.proto` declares them; Connect's codec is protojson with its defaults, which
+spells the same fields in lowerCamelCase. A caller that changes only the path
+gets `200` and a body full of fields it does not recognise, and reads
+`undefined` for every multi-word one. Go through every field the caller touches
+in the response, not just the ones in the happy path, and rename them.
+
+Requests are unaffected: protojson unmarshalling accepts both spellings on both
+stacks, so a body that already says `document_uuid` keeps working against a
+Connect path.
+
+A caller that inspected HTTP status codes instead of the body's `code` has to
+switch to the code; it is the same string on both stacks. And a caller that
+treats "the fetch resolved" as success has to start reading `response.ok`: the
+Connect error body has no `msg`, so a check for one silently turns every error
+into data.
 
 ## What not to do
 
