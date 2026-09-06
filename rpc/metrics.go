@@ -157,10 +157,16 @@ func MetricsInterceptor(
 	}, nil
 }
 
-// ResponseStatus is the HTTP status a response is sent with, as a string, which
-// is the form twirp.StatusCode reports it in. gRPC and gRPC-Web answer every
-// call with 200 and carry the code in the trailers, so a response on those
-// protocols is reported as 200 whatever the error was.
+// ResponseStatus is the HTTP status a Connect response is sent with, as a
+// string, which is the form twirp.StatusCode reports it in. gRPC and gRPC-Web
+// answer every call with 200 and carry the code in the trailers, so a response
+// on those protocols is reported as 200 whatever the error was.
+//
+// It is the Connect status mapping, which differs from Twirp's for canceled,
+// deadline_exceeded and failed_precondition, so a caller reporting a Twirp
+// response has to know that those three codes are the ones it cannot use it
+// for. The authentication middleware can: the codes it answers with are
+// answered with the same status on both stacks.
 func ResponseStatus(err error, protocol string) string {
 	switch protocol {
 	case rpcmetrics.ProtocolGRPC, rpcmetrics.ProtocolGRPCWeb:

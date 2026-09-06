@@ -829,6 +829,9 @@ func (o *refusalObserver) observe(
 		customer = o.customer(ctx)
 	}
 
+	// rpc.ResponseStatus is the Connect status mapping, which the codes the
+	// middleware refuses a request with — unauthenticated, and internal for
+	// a broken parser — are answered with on both stacks.
 	o.metrics.Responses.WithLabelValues(
 		service, method, rpc.ResponseStatus(err, protocol), customer,
 	).Inc()
