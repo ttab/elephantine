@@ -56,11 +56,6 @@ linters:
         - embedlit
     nestif:
       min-complexity: 6
-    gomoddirectives:
-      # The Connect migration pins ttab/mage to a sibling checkout while the
-      # rpc namespace the magefile needs is unreleased. Turn this back off,
-      # and remove the replace, once mage is tagged.
-      replace-local: true
       replace-allow-list:
         - github.com/ttab/mage
     wrapcheck:

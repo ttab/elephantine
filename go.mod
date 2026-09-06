@@ -16,7 +16,7 @@ require (
 	github.com/magefile/mage v1.17.2
 	github.com/prometheus/client_golang v1.24.1
 	github.com/ryanuber/go-glob v1.0.0
-	github.com/ttab/mage v0.11.2
+	github.com/ttab/mage v0.12.1-0.20260906054633-c20d3132ec99
 	github.com/twitchtv/twirp v8.1.3+incompatible
 	github.com/urfave/cli/v3 v3.10.1
 	golang.org/x/oauth2 v0.36.0
@@ -57,4 +57,3 @@ require (
 )
 
 // TODO: pin to a pushed commit
-replace github.com/ttab/mage => /home/hugowett/Projects/mage
