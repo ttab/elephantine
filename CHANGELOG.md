@@ -111,6 +111,13 @@ the same log keys and levels. That also removes the dependence on hook order —
 a service that chained `NewTwirpMetricsHooks` ahead of the authentication hook
 used to count a refused call as a request as well.
 
+**Build (Go 1.27.1):** the module's `go` directive is `1.27.1`, the latest
+patch of the 1.27 line, where v0.28.0 declared `1.27.0`. Every consumer builds
+elephantine with a toolchain at least that new, which `GOTOOLCHAIN=auto`
+downloads by itself and `GOTOOLCHAIN=local` does not: a build box pinned to an
+older toolchain fails on the upgrade rather than falling back. CI reads the
+version from `go.mod`, so nothing else has to be told.
+
 **Behaviour change (the plaintext listener):** `APIServer` serves HTTP/2
 without TLS alongside HTTP/1.1 on its plain listener, which is what makes the
 gRPC protocol Connect mounts on the same path reachable at all: Go negotiates
@@ -227,6 +234,8 @@ Changes:
   buf and the plugin versions `github.com/ttab/mage/rpc` pins. `google.golang.org/protobuf`
   moves to v1.36.12 to match the `protoc-gen-go` the committed code is generated
   with.
+- Dependency upgrades: `MicahParks/keyfunc` to v3.8.2, `urfave/cli` to v3.11.0,
+  and the Prometheus and `golang.org/x` support modules.
 - The README gained a "Serving Connect and Twirp" section with the error helper
   table and the mount, and `docs/metrics.md` an "RPC metrics" section saying
   what a change in each of the four series means.
