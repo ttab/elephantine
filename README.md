@@ -142,6 +142,9 @@ gRPC client cannot connect to it at all. It does not make gRPC reachable from
 outside; the ingress speaks HTTP/1.1 to its targets and no gRPC target group is
 provided.
 
+A service that serves its RPCs from an `http.Server` of its own says the same
+thing with `Protocols: elephantine.PlaintextProtocols()`.
+
 `NewDefaultServiceOptions` fills in both stacks, so a service gets logging,
 metrics and authentication parity by construction. A service whose handlers
 still return Twirp errors adds `rpc.LegacyTwirpErrors()` to

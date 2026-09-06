@@ -202,8 +202,10 @@ without TLS inside the cluster. The two are told apart by the HTTP/2 connection
 preface, so Twirp, SSE and websocket callers are unaffected. It does not make
 gRPC reachable from outside: the ingress speaks HTTP/1.1 to its targets, and
 external gRPC access is deliberately not provided (decision 14). A service that
-mounts Connect on its own `http.Server` has to set the same protocols itself, or
-gRPC cannot be spoken to it at all.
+mounts Connect on an `http.Server` of its own sets the same protocols with
+`Protocols: elephantine.PlaintextProtocols()`; without it gRPC cannot be spoken
+to that listener at all, and nothing says so — the connection is simply refused
+as HTTP/1.1.
 
 ### With your own router
 

@@ -176,7 +176,7 @@ func NewTestAPIServer(
 	// plaintext listener serves. Without it a test cannot reach the Connect
 	// handler over gRPC.
 	testServer := httptest.NewUnstartedServer(&handler)
-	testServer.Config.Protocols = plaintextProtocols()
+	testServer.Config.Protocols = PlaintextProtocols()
 
 	testServer.Start()
 
@@ -360,14 +360,18 @@ func (s *APIServer) RegisterConnect(
 	}))
 }
 
-// plaintextProtocols is the protocol set the plaintext listener serves:
+// PlaintextProtocols is the protocol set the plaintext listener serves:
 // HTTP/1.1 and HTTP/2 without TLS. Go only negotiates HTTP/2 through the TLS
 // ALPN handshake, so a listener that does not say this serves HTTP/1.1 only,
 // and gRPC — which Connect serves on the same path as everything else, and
 // which requires HTTP/2 — cannot be spoken to it at all. The two are told
 // apart by the HTTP/2 connection preface, so Twirp, SSE, the websocket
 // upgrade and every other HTTP/1.1 caller are unaffected.
-func plaintextProtocols() *http.Protocols {
+//
+// APIServer sets it on its own listener. It is exported for the services that
+// serve their RPCs from an http.Server of their own, which have to say the
+// same thing or lose gRPC without any error to say so.
+func PlaintextProtocols() *http.Protocols {
 	var p http.Protocols
 
 	p.SetHTTP1(true)
@@ -425,7 +429,7 @@ func (s *APIServer) ListenAndServe(ctx context.Context) error {
 			Addr:              s.addr,
 			Handler:           loggingHandler,
 			ReadHeaderTimeout: 5 * time.Second,
-			Protocols:         plaintextProtocols(),
+			Protocols:         PlaintextProtocols(),
 		}
 
 		err := ListenAndServeContext(ctx, &server, 10*time.Second)

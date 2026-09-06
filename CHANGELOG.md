@@ -137,8 +137,10 @@ reading them. A browser client uses Connect. External access stays open as a
 later iteration.
 
 A service that mounts Connect on an `http.Server` of its own, rather than on
-`APIServer`, has to set the same `http.Protocols` itself; without it gRPC
-cannot be spoken to that listener even from inside the cluster.
+`APIServer`, sets the same protocols with `elephantine.PlaintextProtocols()`,
+which is exported for exactly that; without it gRPC cannot be spoken to that
+listener even from inside the cluster, and nothing reports the difference — the
+connection is refused as HTTP/1.1.
 
 **Behaviour change (CORS):** the default allowed request headers gain
 `Connect-Protocol-Version` and `Connect-Timeout-Ms`, which a browser Connect
