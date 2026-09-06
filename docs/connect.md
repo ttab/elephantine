@@ -137,8 +137,9 @@ interceptors := []connect.Interceptor{
 handlerOpts := []connect.HandlerOption{connect.WithInterceptors(interceptors...)}
 ```
 
-Interceptors apply outermost first. Put the error-coding interceptors innermost
-so logging and metrics see the code the caller will be answered with.
+Interceptors apply outermost first. While `rpc.LegacyTwirpErrors()` is in the
+chain, keep it innermost so logging and metrics see the code the caller will be
+answered with.
 
 ### Errors in handlers
 
@@ -167,11 +168,14 @@ Rules that follow from the shape:
 
 - **Never wrap an RPC error.** `fmt.Errorf("get document: %w", rpc.NotFound(…))`
   turns a coded error into an uncoded one. Return the helper's result as it is.
-- **An uncoded error is `internal` on Twirp and `unknown` on Connect** unless
-  the service says otherwise. A service that still has bare `fmt.Errorf`
-  returns in its handlers adds an innermost interceptor that gives uncoded
-  errors `connect.CodeInternal` (elephant-repository's `codeUncodedErrors`),
-  or removes the bare returns. Either way, document which.
+- **Every handler error carries a code.** A failed query, a marshalling
+  failure, anything that is the server's fault, is returned as
+  `rpc.Internalf("load document: %w", err)`, never as a bare `fmt.Errorf`. The
+  two stacks default an uncoded error differently (Twirp `internal`, Connect
+  `unknown`), and the handler is the only place that knows which code is right,
+  so do not paper over it with an interceptor that codes errors on the way
+  out. While rewriting, check each site: a parse failure of a caller-supplied
+  value is `rpc.InvalidArgument`, not `internal`.
 - **Every RPC checks its scope explicitly** with `rpc.RequireAnyScope`.
   Authentication is middleware and knows nothing about scopes; a handler
   without a scope check fails open on both stacks.

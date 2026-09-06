@@ -110,10 +110,15 @@ completely:
   `connect.Code<X>.String()`, which spells the same.
 - Preserve every message and every meta key exactly. The parity tests below
   are what prove it; the meta keys are part of the contract with clients.
-- Decide what happens to uncoded errors (bare `fmt.Errorf` returns from a
-  handler). Twirp answers `internal`; Connect answers `unknown` unless the
-  service adds an innermost interceptor that codes them `internal`. Do one or
-  the other and document it; elephant-repository chose the interceptor.
+- Rewrite every bare `fmt.Errorf` return in a handler to a coded error, since
+  Twirp answered those `internal` and Connect would answer `unknown`. Server
+  faults become `rpc.Internalf(...)`; while you are at each site, a parse
+  failure of a caller-supplied value becomes `rpc.InvalidArgument`, which is a
+  visible code change to record in the CHANGELOG. Do not add an interceptor
+  that codes errors on the way out: fewer moving parts, and the handler is the
+  one place that knows the right code. Helpers that return plain errors are
+  fine as long as every handler that calls them wraps the result in a coded
+  error.
 - Remove `rpc.LegacyTwirpErrors()` from the Connect chain.
 - Acceptance grep: `grep -rl twitchtv/twirp --include='*.go' .` lists only the
   Twirp mount (the file that calls `New<Service>Server`) and the test client
