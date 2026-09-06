@@ -203,16 +203,32 @@ func TwirpInterceptor() twirp.Interceptor {
 // moved to the Connect error vocabulary, and is removed in the change that
 // moves them.
 func LegacyTwirpErrors() connect.Interceptor {
-	return connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
-		return func(
-			ctx context.Context, req connect.AnyRequest,
-		) (connect.AnyResponse, error) {
-			res, err := next(ctx, req)
-			if err != nil {
-				return nil, FromTwirp(err)
-			}
+	return interceptor{
+		unary: func(next connect.UnaryFunc) connect.UnaryFunc {
+			return func(
+				ctx context.Context, req connect.AnyRequest,
+			) (connect.AnyResponse, error) {
+				res, err := next(ctx, req)
+				if err != nil {
+					return nil, FromTwirp(err)
+				}
 
-			return res, nil
-		}
-	})
+				return res, nil
+			}
+		},
+		streamingHandler: func(
+			next connect.StreamingHandlerFunc,
+		) connect.StreamingHandlerFunc {
+			return func(
+				ctx context.Context, conn connect.StreamingHandlerConn,
+			) error {
+				err := next(ctx, conn)
+				if err != nil {
+					return FromTwirp(err)
+				}
+
+				return nil
+			}
+		},
+	}
 }

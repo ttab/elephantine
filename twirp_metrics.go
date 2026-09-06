@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/ttab/elephantine/internal/auth"
 	"github.com/ttab/elephantine/internal/rpcmetrics"
 	"github.com/twitchtv/twirp"
 )
@@ -130,6 +131,7 @@ func newTwirpMetricsHooks(
 
 		metrics.ProtocolResponses.WithLabelValues(
 			serviceName, method, rpcmetrics.ProtocolTwirp, state.code,
+			auth.ClientIDFromContext(ctx),
 		).Inc()
 
 		dur := time.Since(state.start).Seconds() // 100ms = 0.1 sek

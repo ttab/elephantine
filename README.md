@@ -177,15 +177,23 @@ instead.
 
 ### Authentication
 
-Authentication is protocol-neutral HTTP middleware. `SetAuthInfoValidation`
-parses the `Authorization` header and puts the `AuthInfo` on the request
-context, where both stacks read it with `GetAuthInfo`. The middleware cannot
-know which protocol the caller speaks, so a request it could not authenticate
-is let through with the reason recorded on the context, and the Twirp hook and
-the Connect interceptor turn that into the coded error before the handler runs:
-`unauthenticated` for a missing authorization, `permission_denied` for an
-invalid one. `ServiceAuthOptional` lets a missing authorization through; an
-invalid one always fails.
+Authentication is protocol-neutral HTTP middleware, and it fails closed.
+`SetAuthInfoValidation` parses the `Authorization` header and puts the
+`AuthInfo` on the request context, where both stacks read it with
+`GetAuthInfo`, and answers a request it could not authenticate itself, before
+the request reaches a handler: `connect.NewErrorWriter` renders the Connect,
+gRPC and gRPC-Web error bodies and `twirp.WriteError` the Twirp one. A missing
+authorization and an invalid one are both `unauthenticated` (401);
+`permission_denied` is for a caller we identified and that is not allowed to
+make the call. `ServiceAuthOptional` lets a missing authorization through as an
+anonymous caller; an invalid one always fails.
+
+The Twirp hook and the `rpc.AuthInfoInterceptor` the same call installs are the
+safety net for a mount that does not run the middleware: they refuse a call
+that reaches a handler with no authenticated caller on its context. Every
+interceptor in `rpc` wraps streaming handlers and streaming clients as well as
+unary calls, since `connect.UnaryInterceptorFunc` would pass a stream through
+unauthenticated and uncounted.
 
 ### Client headers
 

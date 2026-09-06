@@ -6,20 +6,84 @@ detail.
 
 ## [v0.29.0] - Unreleased
 
-**Behaviour change (authentication):** `ServiceOptions.SetAuthInfoValidation`
-is protocol-neutral HTTP middleware rather than a Twirp `RequestRouted` hook,
-so that a service serving Connect authenticates its callers the same way on
-both stacks. The middleware parses the `Authorization` header and puts the
-`AuthInfo` on the request context, and a request it could not authenticate is
-let through with the reason recorded, which the Twirp hook and the Connect
-interceptor installed alongside it turn into the coded error before the handler
-runs. Twirp callers see exactly the codes they saw before — `unauthenticated`
-for a missing authorization, `permission_denied` for an invalid one — and
-`ServiceAuthOptional` still lets an anonymous caller through. What is gone is
-the `twirp.WithHTTPRequestHeaders` smuggling the middleware used to do: a
-handler that read the `Authorization` header back out of the Twirp context with
+**Breaking (authentication):** `ServiceOptions.SetAuthInfoValidation` is
+protocol-neutral HTTP middleware rather than a Twirp `RequestRouted` hook, and
+it fails closed: it answers a request it could not authenticate itself, before
+the request reaches a handler, an interceptor or a hook, rendering the error in
+the protocol the caller is speaking with `connect.NewErrorWriter` for Connect,
+gRPC and gRPC-Web and `twirp.WriteError` for Twirp. **An invalid token is now
+answered `unauthenticated` (401) where it was answered `permission_denied`
+(403)**: a caller we could not identify is unauthenticated whichever way the
+authorization failed, and `permission_denied` is left to mean a caller we did
+identify and that lacks a scope. Anything keyed on 403 for a bad token — an
+ingress rule, a dashboard panel, a client's retry logic — reads 401 after the
+upgrade. `ServiceAuthOptional` still lets a request without an `Authorization`
+header through as an anonymous caller, and an authorization the parser rejects
+still always fails.
+
+Two holes are closed with it. A Connect handler built without
+`opt.HandlerOptions()`, or mounted by a service that composes its options by
+hand, no longer runs unauthenticated: the middleware refuses the request before
+the handler is reached. And every interceptor in `rpc` now implements
+`WrapStreamingClient` and `WrapStreamingHandler` as well as `WrapUnary`, where
+`connect.UnaryInterceptorFunc` passes streaming calls straight through, so a
+streaming handler is authenticated, logged and counted like a unary one rather
+than running with no check at all. The interceptor
+`rpc.AuthInfoInterceptor(required)` is the remaining safety net: it refuses a
+call that reaches a handler with no authenticated caller on its context, which
+is what a mount that does not run the middleware would otherwise do silently.
+The request-scoped "could not authenticate" marker the middleware used to set
+is gone, since nothing lets such a request through any more.
+
+Because the middleware answers before the request body is read, an
+unauthenticated caller can no longer make a replica unmarshal a request body or
+probe its parsing on the Connect stack, where connect-go unmarshals the body
+before it runs an interceptor. What is also gone is the
+`twirp.WithHTTPRequestHeaders` smuggling the middleware used to do: a handler
+that read the `Authorization` header back out of the Twirp context with
 `twirp.HTTPRequestHeaders` no longer finds it, and reads `GetAuthInfo(ctx)`
 instead.
+
+**Behaviour change (RPC metrics):** `rpc_requests_total`,
+`rpc_duration_seconds` and `rpc_responses_total` keep their names, labels, help
+texts and label values, but the collectors are now declared once and shared
+between the Twirp hooks and the Connect interceptor, so a dual-stack service
+reports one set of series and registers each metric once. As a consequence
+`NewTwirpMetricsHooks` reuses an already registered collector where it used to
+fail with a registration error. A new counter,
+`rpc_protocol_responses_total{service,method,protocol,code,client_id}`, is
+reported by both stacks: `protocol="twirp"` going to zero for a method is what
+says its Twirp mount can be removed, `client_id` (the token's client id claim,
+falling back to the authorized party, and empty for an anonymous caller) names
+the applications that have to move before it can, and the `code` label is the
+error breakdown `rpc_responses_total` cannot give, since Connect answers
+`failed_precondition` with `400` rather than Twirp's `412` and so a lock
+conflict no longer has a status of its own. `ServiceOptions.AddMetricsHooks`
+takes the `TwirpMetricOptionFunc` options as a variadic second argument and
+passes the customer function on to the Connect interceptor.
+
+Three things about the label values are worth knowing before a panel is built
+on them. `status` is the status actually sent, so a gRPC or gRPC-Web response
+is `200` whatever the outcome was — those protocols answer 200 and carry the
+code in the trailers — and only `rpc_protocol_responses_total` says what
+happened. A handler error that is not a `*connect.Error` but that wraps
+`context.Canceled` or a deadline is reported as `canceled` or
+`deadline_exceeded` rather than `unknown`, because connect-go returns a bare
+context error from its own handler wrapper when the request context is already
+done, and counting those as `unknown` would have made every disconnected client
+look like a server fault. And framework-level failures on the Connect stack are
+not counted at all: connect-go answers a malformed body, an unsupported content
+type, an unknown method and a body that streams past the request limit before
+it calls an interceptor, where Twirp reports the same failures through its
+hooks as `malformed` and `bad_route`. `docs/metrics.md` says so next to the
+series.
+
+A request the authentication middleware refuses is counted and logged by the
+middleware, since it never reaches a hook or an interceptor: as a response and
+not as a request, which is what the Twirp hooks have always reported, and with
+the same log keys and levels. That also removes the dependence on hook order —
+a service that chained `NewTwirpMetricsHooks` ahead of the authentication hook
+used to count a refused call as a request as well.
 
 **Behaviour change (the plaintext listener):** `APIServer` serves HTTP/2
 without TLS alongside HTTP/1.1 on its plain listener, which is what makes the
@@ -30,22 +94,6 @@ protocols are told apart by the HTTP/2 connection preface, so Twirp, SSE, the
 websocket upgrade and every other HTTP/1.1 caller are unaffected. An ingress or
 proxy in front of the service still has to be configured for HTTP/2 before a
 gRPC caller can reach it from outside.
-
-**Behaviour change (RPC metrics):** `rpc_requests_total`,
-`rpc_duration_seconds` and `rpc_responses_total` keep their names, labels, help
-texts and label values, but the collectors are now declared once and shared
-between the Twirp hooks and the Connect interceptor, so a dual-stack service
-reports one set of series and registers each metric once. As a consequence
-`NewTwirpMetricsHooks` reuses an already registered collector where it used to
-fail with a registration error. A new counter,
-`rpc_protocol_responses_total{service,method,protocol,code}`, is reported by
-both stacks: `protocol="twirp"` going to zero for a method is what says its
-Twirp mount can be removed, and the `code` label is the error breakdown
-`rpc_responses_total` cannot give, since Connect answers `failed_precondition`
-with `400` rather than Twirp's `412` and so a lock conflict no longer has a
-status of its own. `ServiceOptions.AddMetricsHooks` takes the
-`TwirpMetricOptionFunc` options as a variadic second argument and passes the
-customer function on to the Connect interceptor.
 
 **Behaviour change (CORS):** the default allowed request headers gain
 `Connect-Protocol-Version` and `Connect-Timeout-Ms`, which a browser Connect
@@ -87,12 +135,22 @@ Changes:
   `internal` with the wrapped message before, and answers `not_found` with the
   Twirp error's own message now.
 - A call that authentication refuses is counted in `rpc_responses_total` and
-  `rpc_protocol_responses_total` but not in `rpc_requests_total`, on the Connect
-  stack as well as the Twirp one. The Twirp hooks have always reported it that
-  way, since the metrics hook increments the counter from `RequestRouted` and
-  the authentication hook chained ahead of it stops the chain; the Connect
-  interceptor now matches, so the difference between the two series means the
-  same thing whichever protocol the caller used.
+  `rpc_protocol_responses_total` but not in `rpc_requests_total`, whichever
+  protocol the caller used, so the difference between the two series means the
+  same thing on both stacks. The authentication middleware reports it, since it
+  answers the request before either stack's instrumentation runs, and logs it
+  with the keys and levels a refused call was logged with before.
+- `AuthInfo.ClientID()` returns the client id claim of the caller's token,
+  falling back to the authorized party, and is the value the `client_id` label
+  on `rpc_protocol_responses_total` carries. It is safe to call on a nil
+  `AuthInfo`, so an anonymous caller reports an empty client id.
+- `rpc.AuthInfoInterceptor(required)` refuses a call that reaches a handler with
+  no authenticated caller on its context, and `rpc.LogErrorResponse(ctx,
+  logger, err)` logs an error response with the keys and levels both stacks
+  use. `rpc.ResponseCode(err)`, `rpc.ResponseStatus(err, protocol)` and
+  `rpc.ProtocolLabel(protocol)` are the label values the interceptors report, so
+  a service that answers an RPC request in its own middleware can report it the
+  same way.
 - `APIServer.RegisterConnect(path, handler, opt)` mounts a Connect handler
   behind the same authentication middleware as the Twirp services, and
   `ServiceOptions.HandlerOptions()` is the Connect counterpart of

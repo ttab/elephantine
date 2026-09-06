@@ -185,14 +185,36 @@ Rules that follow from the shape:
 
 ### Authentication
 
-`ServiceOptions.SetAuthInfoValidation` is protocol-neutral HTTP middleware. It
-parses `Authorization`, puts the `AuthInfo` on the request context, and a
-request it could not authenticate is let through with the reason recorded, which
-the Twirp hook and the Connect interceptor turn into the coded error before the
-handler runs: `unauthenticated` for a missing authorization, `permission_denied`
-for an invalid one. `ServiceAuthOptional` lets a missing authorization through;
-an invalid one always fails. Handlers read `elephantine.GetAuthInfo(ctx)` (or
-`rpc.GetAuthInfo`, the same function) on both stacks.
+`ServiceOptions.SetAuthInfoValidation` is protocol-neutral HTTP middleware, and
+it fails closed. It parses `Authorization`, puts the `AuthInfo` on the request
+context, and answers a request it could not authenticate itself, before the
+request reaches a handler, an interceptor or a hook. The error is rendered in
+the protocol the caller is speaking: `connect.NewErrorWriter` writes the
+Connect, gRPC and gRPC-Web bodies, `twirp.WriteError` the Twirp one, so each
+caller gets the error body its own client parses.
+
+A missing authorization and an invalid one are both `unauthenticated` (401).
+`permission_denied` is for a caller we did identify and that is not allowed to
+make the call, which is what `rpc.RequireAnyScope` returns.
+`ServiceAuthOptional` lets a request without an `Authorization` header through
+as an anonymous caller; an authorization the parser rejects always fails.
+Handlers read `elephantine.GetAuthInfo(ctx)` (or `rpc.GetAuthInfo`, the same
+function) on both stacks, and `AuthInfo.ClientID()` names the application the
+token was issued to.
+
+The Twirp hook and the Connect interceptor
+(`rpc.AuthInfoInterceptor(required)`) that `SetAuthInfoValidation` installs are
+the safety net for a mount that does not run the middleware: they refuse a call
+that reaches a handler with no authenticated caller on its context. Every
+interceptor in `rpc` implements `WrapStreamingHandler` and
+`WrapStreamingClient` as well as `WrapUnary`, because
+`connect.UnaryInterceptorFunc` passes streaming calls straight through — an
+authentication interceptor written that way would let an unauthenticated stream
+run, and a metrics one would leave the call uncounted.
+
+Because the middleware answers before the body is read, an unauthenticated
+caller cannot make a replica unmarshal a request body or probe its parsing,
+which is the exposure the request body limit alone did not close.
 
 ### Metrics
 
@@ -200,13 +222,39 @@ an invalid one always fails. Handlers read `elephantine.GetAuthInfo(ctx)` (or
 their names, labels and label values on both stacks, and the collectors are
 shared, so a dual-stack server registers each once. `service` is the short
 service name (`Documents`), `method` the RPC name, `status` the HTTP status
-actually sent (so 400 for `failed_precondition` on Connect, 412 on Twirp).
+actually sent (so 400 for `failed_precondition` on Connect, 412 on Twirp, and
+200 for every gRPC and gRPC-Web response, since those protocols answer 200 and
+carry the code in the trailers).
 
-`rpc_protocol_responses_total{service,method,protocol,code}` is new and
-reported by both stacks. `protocol` is `twirp`, `connect`, `grpc` or `grpc-web`;
-`code` is the RPC code or `ok`. Filter on `protocol="twirp"` to see which
-methods still have Twirp callers; filter on `code` for the error breakdown the
-status label cannot give. See [metrics.md](metrics.md#rpc-metrics).
+`rpc_protocol_responses_total{service,method,protocol,code,client_id}` is new
+and reported by both stacks. `protocol` is `twirp`, `connect`, `grpc` or
+`grpc-web`; `code` is the RPC code or `ok`; `client_id` is the client id claim
+of the caller's token, empty for an anonymous or refused call. Filter on
+`protocol="twirp"` to see which methods still have Twirp callers, and read
+`client_id` to see which applications they are, which is what step 3 of the
+service playbook needs before a major release removes the Twirp mount. Filter
+on `code` for the error breakdown the status label cannot give. See
+[metrics.md](metrics.md#rpc-metrics).
+
+Two things the series do not cover, and one that changed:
+
+- **Framework-level failures on Connect are not counted.** connect-go answers a
+  malformed body, an unsupported content type, an unknown method and a body
+  that streams past the request limit before it calls an interceptor, so none
+  of them reach the metrics. Twirp counts the same failures through its hooks,
+  as `malformed` and `bad_route`. A Connect mount's counters therefore describe
+  the calls that reached a method, and a request that never named one is
+  visible only in the ingress logs.
+- **A call the authentication middleware refuses is counted by the
+  middleware**, as a response and not as a request, which is what the Twirp
+  hooks have always reported. It is logged there too, with the same keys and
+  levels a refused call was logged with when the stacks rendered the error.
+- **A handler error that is not a `*connect.Error` but that wraps
+  `context.Canceled` or a deadline is reported as `canceled` or
+  `deadline_exceeded`**, the way connect-go answers it, rather than as
+  `unknown`. connect-go returns a bare context error from its own handler
+  wrapper when the request context is already done, so without this every
+  client that disconnected would look like a server fault.
 
 ### CORS
 

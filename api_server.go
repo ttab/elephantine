@@ -13,6 +13,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/ttab/elephantine/internal/auth"
+	"github.com/ttab/elephantine/internal/rpcmetrics"
 	"github.com/ttab/elephantine/rpc"
 	"github.com/twitchtv/twirp"
 	"golang.org/x/sync/errgroup"
@@ -319,6 +320,8 @@ func (s *APIServer) RegisterAPI(
 	s.Mux.Handle("POST "+api.PathPrefix(), HTTPErrorHandlerFunc(func(
 		w http.ResponseWriter, r *http.Request,
 	) error {
+		r = withRPCStack(r, rpcStackTwirp)
+
 		if opt.AuthMiddleware != nil {
 			return opt.AuthMiddleware(w, r, api)
 		}
@@ -345,6 +348,8 @@ func (s *APIServer) RegisterConnect(
 	s.Mux.Handle(path, HTTPErrorHandlerFunc(func(
 		w http.ResponseWriter, r *http.Request,
 	) error {
+		r = withRPCStack(r, rpcStackConnect)
+
 		if opt.AuthMiddleware != nil {
 			return opt.AuthMiddleware(w, r, h)
 		}
@@ -521,9 +526,19 @@ type ServiceOptions struct {
 	// may have their default/zero value.
 	//
 	// It only affects the Twirp mount. Connect's JSON codec is protojson
-	// with its default options, which already omit unpopulated fields, so
-	// the two stacks produce the same JSON either way.
+	// with its default options, which also omits unpopulated fields.
+	//
+	// Note that the two stacks do not spell field names the same way:
+	// Twirp's JSON uses the proto names (document_uuid) and Connect's the
+	// protojson default of lowerCamelCase (documentUuid). Both accept
+	// either spelling in a request.
 	JSONSkipDefaults bool
+
+	// refusalObserver logs and counts the requests the authentication
+	// middleware answers itself. It is a pointer so that it is shared by
+	// every copy of the options value, whichever order the Set and Add
+	// methods were called in.
+	refusalObserver *refusalObserver
 }
 
 // ServerOptions returns a ServerOptions function that configures the twirp
@@ -560,6 +575,8 @@ func (so *ServiceOptions) AddLoggingHooks(
 	so.Hooks = twirp.ChainHooks(loggingHooks(logger), so.Hooks)
 
 	so.addInterceptor(rpc.LoggingInterceptor(logger))
+
+	so.refusals().logger = logger
 }
 
 // AddMetricsHooks adds the RPC metrics to both stacks. The options are the ones
@@ -602,6 +619,18 @@ func (so *ServiceOptions) AddMetricsHooks(
 
 	so.addInterceptor(interceptor)
 
+	// The authentication middleware answers a refused request before it
+	// reaches either stack, so it reports that response itself.
+	collectors, err := rpcmetrics.New(opt.reg)
+	if err != nil {
+		return fmt.Errorf("declare the RPC metrics: %w", err)
+	}
+
+	refusals := so.refusals()
+
+	refusals.metrics = collectors
+	refusals.customer = opt.contextCustomer
+
 	return nil
 }
 
@@ -617,22 +646,40 @@ func (so *ServiceOptions) addInterceptor(i connect.Interceptor) {
 // parser.
 //
 // Authentication is protocol neutral HTTP middleware: it parses the
-// Authorization header, and puts the resulting AuthInfo on the request context,
-// where both stacks read it with GetAuthInfo. The middleware cannot know which
-// protocol the caller is speaking, and so cannot render an error body itself.
-// A request it could not authenticate is therefore let through with the reason
-// recorded on the context, and the Twirp hook and the Connect interceptor
-// installed here turn that into a coded error before the handler runs: a
-// missing authorization is unauthenticated, an invalid one is permission
-// denied, exactly as before.
+// Authorization header, puts the resulting AuthInfo on the request context,
+// where both stacks read it with GetAuthInfo, and answers a request it could
+// not authenticate itself, with an unauthenticated error rendered in the
+// protocol the caller is speaking. Connect, gRPC and gRPC-Web errors are
+// rendered by connect.ErrorWriter and Twirp errors by twirp.WriteError, so the
+// caller sees the error body its own client parses.
+//
+// Both a missing and an invalid authorization are unauthenticated: the caller
+// could not be identified either way. ServiceAuthOptional lets a request
+// without an Authorization header through as an anonymous caller; an
+// authorization the parser rejects always fails.
+//
+// The Twirp hook and the Connect interceptor installed here are the safety net
+// for a mount that does not run the middleware: they refuse a call that reaches
+// a handler with no authenticated caller on its context when the service
+// requires authentication, rather than letting it run unauthenticated.
 func (so *ServiceOptions) SetAuthInfoValidation(
 	parser AuthInfoParser, requireAuth ServiceAuth,
 ) {
+	var (
+		refusals    = so.refusals()
+		errorWriter = connect.NewErrorWriter()
+	)
+
 	so.AuthMiddleware = func(
 		w http.ResponseWriter, r *http.Request, next http.Handler,
 	) error {
-		ctx := authenticateRequest(r.Context(), parser, requireAuth,
+		ctx, err := authenticateRequest(r.Context(), parser, requireAuth,
 			r.Header.Get("Authorization"))
+		if err != nil {
+			refusals.refuse(errorWriter, w, r, err)
+
+			return nil
+		}
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 
@@ -641,7 +688,7 @@ func (so *ServiceOptions) SetAuthInfoValidation(
 
 	hooks := twirp.ServerHooks{
 		RequestRouted: func(ctx context.Context) (context.Context, error) {
-			return ctx, rpc.ToTwirp(auth.GetError(ctx))
+			return ctx, rpc.ToTwirp(missingAuthError(ctx, requireAuth))
 		},
 	}
 
@@ -651,55 +698,208 @@ func (so *ServiceOptions) SetAuthInfoValidation(
 		so.Hooks = &hooks
 	}
 
-	so.Interceptors = append(so.Interceptors, authErrorInterceptor())
+	so.Interceptors = append(so.Interceptors,
+		rpc.AuthInfoInterceptor(bool(requireAuth)))
 }
 
 // authenticateRequest parses the authorization header and returns a context
-// that either carries the caller's AuthInfo or the reason it does not.
+// carrying the caller's AuthInfo, or the error the caller is to be answered
+// with. A service that allows anonymous callers gets the context unchanged and
+// no error when the header is missing.
 func authenticateRequest(
 	ctx context.Context,
 	parser AuthInfoParser, requireAuth ServiceAuth,
 	authorization string,
-) context.Context {
+) (context.Context, error) {
 	info, err := parser.AuthInfoFromHeader(authorization)
 
 	switch {
 	case errors.Is(err, ErrNoAuthorization):
 		if requireAuth {
-			return auth.SetError(ctx,
-				rpc.Unauthenticated("authentication required"))
+			return ctx, rpc.Unauthenticated("authentication required")
 		}
 
-		return ctx
+		return ctx, nil
 	case err != nil:
-		return auth.SetError(ctx, rpc.Errorf(
-			connect.CodePermissionDenied,
-			"invalid authorization: %v", err))
+		return ctx, rpc.Errorf(connect.CodeUnauthenticated,
+			"invalid authorization: %v", err)
 	case info == nil:
-		return auth.SetError(ctx, rpc.Internalf(
-			"invalid auth info parser response"))
+		return ctx, rpc.Internalf("invalid auth info parser response")
 	}
 
 	ctx = SetAuthInfo(ctx, info)
 
 	SetLogMetadata(ctx, LogKeySubject, info.Claims.Subject)
 
-	return ctx
+	return ctx, nil
 }
 
-// authErrorInterceptor fails a Connect call that the authentication middleware
-// could not authenticate, with the error the middleware recorded.
-func authErrorInterceptor() connect.Interceptor {
-	return connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
-		return func(
-			ctx context.Context, req connect.AnyRequest,
-		) (connect.AnyResponse, error) {
-			err := auth.GetError(ctx)
-			if err != nil {
-				return nil, err
-			}
+// missingAuthError is the error a call that reached a handler chain without an
+// authenticated caller is refused with, for a service that requires
+// authentication. The middleware answers such a request itself, so this only
+// fires for a mount that does not run the middleware.
+func missingAuthError(ctx context.Context, requireAuth ServiceAuth) error {
+	if !requireAuth {
+		return nil
+	}
 
-			return next(ctx, req)
-		}
-	})
+	_, ok := auth.GetInfo(ctx)
+	if ok {
+		return nil
+	}
+
+	return rpc.Unauthenticated("authentication required")
+}
+
+// refusals returns the observer for the requests the authentication middleware
+// answers itself, creating it if the options do not have one yet. It is a
+// pointer so that every copy of a ServiceOptions value shares it, and so that
+// AddLoggingHooks and AddMetricsHooks can fill it in whichever order they are
+// called in.
+func (so *ServiceOptions) refusals() *refusalObserver {
+	if so.refusalObserver == nil {
+		so.refusalObserver = &refusalObserver{}
+	}
+
+	return so.refusalObserver
+}
+
+// refusalObserver logs and counts the requests the authentication middleware
+// answers before they reach a handler. Those requests never reach a Twirp hook
+// or a Connect interceptor, so this is what keeps a refused call visible in the
+// logs and in rpc_responses_total and rpc_protocol_responses_total, exactly as
+// it was when the stacks rendered the error themselves. It deliberately does
+// not touch rpc_requests_total: a refused call has always been counted as a
+// response and not as a request.
+type refusalObserver struct {
+	logger   *slog.Logger
+	metrics  *rpcmetrics.Metrics
+	customer func(ctx context.Context) string
+}
+
+// refuse answers the request with the error, in the protocol the caller is
+// speaking, and observes the response.
+func (o *refusalObserver) refuse(
+	errorWriter *connect.ErrorWriter,
+	w http.ResponseWriter, r *http.Request, err error,
+) {
+	protocol := requestProtocol(r)
+
+	o.observe(r, protocol, err)
+
+	var writeErr error
+
+	if protocol == rpcmetrics.ProtocolTwirp {
+		writeErr = twirp.WriteError(w, rpc.ToTwirp(err))
+	} else {
+		writeErr = errorWriter.Write(w, r, err)
+	}
+
+	if writeErr != nil && o.logger != nil {
+		o.logger.ErrorContext(r.Context(),
+			"write the RPC error response",
+			LogKeyError, writeErr.Error())
+	}
+}
+
+// observe logs and counts a refused request the way the logging and metrics
+// interceptors log and count a refused call.
+func (o *refusalObserver) observe(
+	r *http.Request, protocol string, err error,
+) {
+	ctx := r.Context()
+
+	service, method, named := rpcmetrics.SplitProcedure(r.URL.Path)
+	if named {
+		SetLogMetadata(ctx, LogKeyService, service)
+		SetLogMetadata(ctx, LogKeyMethod, method)
+	}
+
+	if o.logger != nil {
+		rpc.LogErrorResponse(ctx, o.logger, err)
+	}
+
+	if o.metrics == nil || !named {
+		return
+	}
+
+	var customer string
+
+	if o.customer != nil {
+		customer = o.customer(ctx)
+	}
+
+	o.metrics.Responses.WithLabelValues(
+		service, method, rpc.ResponseStatus(err, protocol), customer,
+	).Inc()
+
+	// The caller is by definition unauthenticated, so there is no client
+	// id to report it under.
+	o.metrics.ProtocolResponses.WithLabelValues(
+		service, method, protocol, rpc.ResponseCode(err).String(), "",
+	).Inc()
+}
+
+// requestProtocol reports the RPC protocol a request is speaking, which decides
+// both how an error is rendered to it and what protocol label the response is
+// counted under. gRPC and gRPC-Web are told by their content type; the rest is
+// decided by the mount, since Twirp and Connect share the content types
+// application/json and application/proto.
+func requestProtocol(r *http.Request) string {
+	contentType, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";")
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+
+	switch {
+	case strings.HasPrefix(contentType, "application/grpc-web"):
+		return rpcmetrics.ProtocolGRPCWeb
+	case strings.HasPrefix(contentType, "application/grpc"):
+		return rpcmetrics.ProtocolGRPC
+	}
+
+	switch rpcStackOf(r.Context()) {
+	case rpcStackTwirp:
+		return rpcmetrics.ProtocolTwirp
+	case rpcStackConnect:
+		return rpcmetrics.ProtocolConnect
+	case rpcStackUnknown:
+	}
+
+	// A service that mounts its RPCs on its own router and calls the
+	// middleware itself marks neither, so fall back to the path: a Connect
+	// procedure is "/<pkg>.<Service>/<Method>" and nothing more, while a
+	// Twirp path carries a prefix ahead of it.
+	if strings.Count(strings.Trim(r.URL.Path, "/"), "/") > 1 {
+		return rpcmetrics.ProtocolTwirp
+	}
+
+	return rpcmetrics.ProtocolConnect
+}
+
+// rpcStack names the protocol family a request was mounted under, so that the
+// authentication middleware can answer a request it refuses in a protocol the
+// caller understands. RegisterAPI marks its mounts as Twirp and RegisterConnect
+// marks its own as Connect.
+type rpcStack int
+
+const (
+	rpcStackUnknown rpcStack = iota
+	rpcStackTwirp
+	rpcStackConnect
+)
+
+type rpcStackCtxKey struct{}
+
+// withRPCStack returns the request with the protocol family of its mount
+// recorded on the context.
+func withRPCStack(r *http.Request, stack rpcStack) *http.Request {
+	return r.WithContext(context.WithValue(
+		r.Context(), rpcStackCtxKey{}, stack))
+}
+
+// rpcStackOf returns the protocol family of the mount the request came in on,
+// or rpcStackUnknown for a request the service mounted itself.
+func rpcStackOf(ctx context.Context) rpcStack {
+	stack, _ := ctx.Value(rpcStackCtxKey{}).(rpcStack)
+
+	return stack
 }

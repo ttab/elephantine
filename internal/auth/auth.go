@@ -59,6 +59,32 @@ type Info struct {
 	Claims JWTClaims
 }
 
+// ClientID returns the id of the application the token was issued to: the
+// "client_id" claim, or the authorized party ("azp") for a token that carries
+// no client id, which is the shape of a token a user was issued through an
+// application. It is the empty string for an anonymous caller, and is safe to
+// call on a nil Info.
+func (i *Info) ClientID() string {
+	if i == nil {
+		return ""
+	}
+
+	if i.Claims.ClientID != "" {
+		return i.Claims.ClientID
+	}
+
+	return i.Claims.AuthorizedParty
+}
+
+// ClientIDFromContext returns the client id of the caller a request
+// authenticated as, or the empty string for an anonymous or unauthenticated
+// request.
+func ClientIDFromContext(ctx context.Context) string {
+	info, _ := GetInfo(ctx)
+
+	return info.ClientID()
+}
+
 // ErrNoAuthorization is used to communicate that authorization was completely
 // missing, rather than being invalid, expired, or malformed.
 var ErrNoAuthorization = errors.New("no authorization provided")
@@ -81,10 +107,7 @@ type Parser interface {
 
 type ctxKey int
 
-const (
-	infoCtxKey  ctxKey = 1
-	errorCtxKey ctxKey = 2
-)
+const infoCtxKey ctxKey = 1
 
 // SetInfo creates a child context with the given authentication information.
 func SetInfo(ctx context.Context, info *Info) context.Context {
@@ -96,21 +119,4 @@ func GetInfo(ctx context.Context) (*Info, bool) {
 	info, ok := ctx.Value(infoCtxKey).(*Info)
 
 	return info, ok && info != nil
-}
-
-// SetError creates a child context carrying the reason the request could not
-// be authenticated. The authentication middleware is protocol neutral and
-// cannot render an RPC error itself, so it marks the request and lets it
-// through; the Twirp hook and the Connect interceptor that guard the handlers
-// turn the marker into a coded error in the protocol the caller is speaking.
-func SetError(ctx context.Context, err error) context.Context {
-	return context.WithValue(ctx, errorCtxKey, err)
-}
-
-// GetError returns the authentication error recorded for the context, or nil
-// if the request authenticated.
-func GetError(ctx context.Context) error {
-	err, _ := ctx.Value(errorCtxKey).(error)
-
-	return err
 }

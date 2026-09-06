@@ -2,6 +2,7 @@ package rpc_test
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/ttab/elephantine"
+	"github.com/ttab/elephantine/internal/rpcmetrics"
 	"github.com/ttab/elephantine/internal/testservice"
 	"github.com/ttab/elephantine/internal/testservice/testserviceconnect"
 	"github.com/ttab/elephantine/rpc"
@@ -22,6 +24,12 @@ import (
 
 // echoMessage is the message the fixture calls echo.
 const echoMessage = "hello"
+
+// testIssuer is the token issuer the test stacks trust.
+const testIssuer = "test"
+
+// logKeyLevel is the key the recording log handler reports the level under.
+const logKeyLevel = "level"
 
 // testImpl implements the fixture service against the plain protobuf
 // interface, which is the interface every elephant service implements.
@@ -47,9 +55,18 @@ func (testImpl) Echo(
 	return &res, nil
 }
 
+// codeBareCancellation is the Fail code the fixture answers with a bare error
+// that wraps a context cancellation, the way connect-go's own handler wrapper
+// does when the request context is already done. It is not an RPC code.
+const codeBareCancellation = "bare-cancellation"
+
 func (testImpl) Fail(
 	_ context.Context, req *testservice.FailRequest,
 ) (*testservice.FailResponse, error) {
+	if req.GetCode() == codeBareCancellation {
+		return nil, fmt.Errorf("do the work: %w", context.Canceled)
+	}
+
 	var code connect.Code
 
 	err := code.UnmarshalText([]byte(req.GetCode()))
@@ -87,6 +104,7 @@ type stack struct {
 	Records  *recordingHandler
 	Token    string
 
+	key    *ecdsa.PrivateKey
 	client *http.Client
 }
 
@@ -106,7 +124,7 @@ func newStack(
 		key     = test.NewSigningKey(t)
 		parser  = elephantine.NewStaticAuthInfoParser(
 			t.Context(), key.PublicKey,
-			elephantine.JWTAuthInfoParserOptions{Issuer: "test"})
+			elephantine.JWTAuthInfoParserOptions{Issuer: testIssuer})
 	)
 
 	so := elephantine.ServiceOptions{
@@ -128,6 +146,9 @@ func newStack(
 
 	srv.RegisterConnect(path, handler, so)
 
+	srv.RegisterConnect(streamPath,
+		newStreamHandler(so.HandlerOptions()...), so)
+
 	err = srv.ListenAndServe(t.Context())
 	test.Mustf(t, err, "start the test API server")
 
@@ -136,26 +157,49 @@ func newStack(
 		Registry: reg,
 		Records:  records,
 		Token:    test.AccessKey(t, key, test.Claims(t, "hugo", "test_read")),
+		key:      key,
 		client:   client,
 	}
 }
 
-// Clients returns one client per protocol, all of them the plain protobuf
-// interface the service is implemented against.
-func (s *stack) Clients(token string) map[string]testservice.Test {
-	client := http.Client{
+// TokenFor signs a token for the claims, so that a test can decide what the
+// call is authenticated as.
+func (s *stack) TokenFor(t *testing.T, claims elephantine.JWTClaims) string {
+	t.Helper()
+
+	return test.AccessKey(t, s.key, claims)
+}
+
+// HTTPClient returns a client that sends the token as a bearer token, the way a
+// token source in an oauth2 client does.
+func (s *stack) HTTPClient(token string) *http.Client {
+	return &http.Client{
 		Transport: &bearerTransport{
 			token: token,
 			next:  s.client.Transport,
 		},
 	}
+}
 
-	base := "http://" + s.Addr
+// StreamClient returns a client for the server-streaming fixture handler.
+func (s *stack) StreamClient(
+	token string,
+) *connect.Client[testservice.EchoRequest, testservice.EchoResponse] {
+	return newStreamClient(s.HTTPClient(token), "http://"+s.Addr)
+}
+
+// Clients returns one client per protocol, all of them the plain protobuf
+// interface the service is implemented against.
+func (s *stack) Clients(token string) map[string]testservice.Test {
+	var (
+		client = s.HTTPClient(token)
+		base   = "http://" + s.Addr
+	)
 
 	return map[string]testservice.Test{
-		"twirp": testservice.NewTestProtobufClient(base, &client),
+		"twirp": testservice.NewTestProtobufClient(base, client),
 		"connect": testserviceconnect.NewTestServiceClient(
-			&client, base),
+			client, base),
 	}
 }
 
@@ -223,7 +267,7 @@ func (h *recordingHandler) Attributes(message string) []map[string]string {
 		}
 
 		attrs := map[string]string{
-			"level": r.Level.String(),
+			logKeyLevel: r.Level.String(),
 		}
 
 		r.Attrs(func(a slog.Attr) bool {
@@ -270,13 +314,17 @@ func TestDualStackAuthentication(t *testing.T) {
 		}
 	})
 
+	// An invalid authorization is unauthenticated rather than permission
+	// denied: the caller could not be identified, which is the same failure
+	// as not presenting a token at all. Permission denied is for a caller
+	// we did identify and that is not allowed to make the call.
 	t.Run("invalid_authorization", func(t *testing.T) {
 		for name, client := range s.Clients("not-a-token") {
 			t.Run(name, func(t *testing.T) {
 				_, err := client.Echo(t.Context(),
 					&testservice.EchoRequest{})
 
-				test.IsRPCError(t, err, connect.CodePermissionDenied)
+				test.IsRPCError(t, err, connect.CodeUnauthenticated)
 			})
 		}
 	})
@@ -304,7 +352,7 @@ func TestDualStackOptionalAuthentication(t *testing.T) {
 			_, err := client.Echo(t.Context(),
 				&testservice.EchoRequest{})
 
-			test.IsRPCError(t, err, connect.CodePermissionDenied)
+			test.IsRPCError(t, err, connect.CodeUnauthenticated)
 		})
 	}
 }
@@ -369,7 +417,7 @@ func TestDualStackErrorParity(t *testing.T) {
 	test.EqualDiff(t, logged[0], logged[1],
 		"log the error the same way on both stacks")
 	test.EqualDiff(t, map[string]string{
-		"level":       "INFO",
+		logKeyLevel:   "INFO",
 		"err_code":    "not_found",
 		"err":         "the call failed on purpose",
 		"status_code": "404",
@@ -409,7 +457,12 @@ func TestDualStackMetrics(t *testing.T) {
 		}),
 	)
 
-	for name, client := range s.Clients(s.Token) {
+	// The client id label comes from the token, so that the counter names
+	// the applications a method still has callers in.
+	claims := test.Claims(t, "hugo", "test_read")
+	claims.ClientID = "eltest"
+
+	for name, client := range s.Clients(s.TokenFor(t, claims)) {
 		_, err := client.Echo(t.Context(),
 			&testservice.EchoRequest{Message: echoMessage})
 		test.Mustf(t, err, "call Echo over %s", name)
@@ -420,8 +473,8 @@ func TestDualStackMetrics(t *testing.T) {
 	}
 
 	// A call that never reaches a handler is a response and not a request,
-	// on both stacks. The Twirp hooks have always reported it that way, so
-	// the Connect interceptor does too.
+	// on both stacks: the authentication middleware answers it and counts
+	// the response itself, and there is no client id to count it under.
 	for name, client := range s.Clients("") {
 		_, err := client.Echo(t.Context(),
 			&testservice.EchoRequest{Message: echoMessage})
@@ -447,14 +500,14 @@ rpc_responses_total{customer="acme",method="Fail",service="Test",status="404"} 2
 	test.Mustf(t, err, "count the responses with the same labels on both stacks")
 
 	err = testutil.GatherAndCompare(s.Registry, strings.NewReader(`
-# HELP rpc_protocol_responses_total `+protocolResponsesHelp+`
+# HELP rpc_protocol_responses_total `+rpcmetrics.ProtocolResponsesHelp+`
 # TYPE rpc_protocol_responses_total counter
-rpc_protocol_responses_total{code="not_found",method="Fail",protocol="connect",service="Test"} 1
-rpc_protocol_responses_total{code="not_found",method="Fail",protocol="twirp",service="Test"} 1
-rpc_protocol_responses_total{code="ok",method="Echo",protocol="connect",service="Test"} 1
-rpc_protocol_responses_total{code="ok",method="Echo",protocol="twirp",service="Test"} 1
-rpc_protocol_responses_total{code="unauthenticated",method="Echo",protocol="connect",service="Test"} 1
-rpc_protocol_responses_total{code="unauthenticated",method="Echo",protocol="twirp",service="Test"} 1
+rpc_protocol_responses_total{client_id="",code="unauthenticated",method="Echo",protocol="connect",service="Test"} 1
+rpc_protocol_responses_total{client_id="",code="unauthenticated",method="Echo",protocol="twirp",service="Test"} 1
+rpc_protocol_responses_total{client_id="eltest",code="not_found",method="Fail",protocol="connect",service="Test"} 1
+rpc_protocol_responses_total{client_id="eltest",code="not_found",method="Fail",protocol="twirp",service="Test"} 1
+rpc_protocol_responses_total{client_id="eltest",code="ok",method="Echo",protocol="connect",service="Test"} 1
+rpc_protocol_responses_total{client_id="eltest",code="ok",method="Echo",protocol="twirp",service="Test"} 1
 `), "rpc_protocol_responses_total")
 	test.Mustf(t, err, "count the responses per protocol and code")
 }
@@ -490,21 +543,12 @@ func TestConnectGRPC(t *testing.T) {
 		"authenticate the caller over gRPC too")
 
 	err = testutil.GatherAndCompare(s.Registry, strings.NewReader(`
-# HELP rpc_protocol_responses_total `+protocolResponsesHelp+`
+# HELP rpc_protocol_responses_total `+rpcmetrics.ProtocolResponsesHelp+`
 # TYPE rpc_protocol_responses_total counter
-rpc_protocol_responses_total{code="ok",method="Echo",protocol="grpc",service="Test"} 1
+rpc_protocol_responses_total{client_id="",code="ok",method="Echo",protocol="grpc",service="Test"} 1
 `), "rpc_protocol_responses_total")
 	test.Mustf(t, err, "report the response under the gRPC protocol")
 }
-
-// protocolResponsesHelp is the help text of rpc_protocol_responses_total, which
-// the exposition format comparison needs verbatim.
-const protocolResponsesHelp = "Number of RPC responses sent, by protocol and" +
-	" RPC code. Traffic on protocol=\"twirp\" is what still keeps a" +
-	" service's Twirp mount alive, so a method whose Twirp share has" +
-	" reached zero can have it removed; the code label separates errors" +
-	" that rpc_responses_total reports under a single HTTP status, such" +
-	" as a lock conflict from a validation failure."
 
 // TestDefaultServiceOptions checks that the standard options come with both
 // stacks wired up.
@@ -514,7 +558,7 @@ func TestDefaultServiceOptions(t *testing.T) {
 
 	parser := elephantine.NewStaticAuthInfoParser(
 		t.Context(), key.PublicKey,
-		elephantine.JWTAuthInfoParserOptions{Issuer: "test"})
+		elephantine.JWTAuthInfoParserOptions{Issuer: testIssuer})
 
 	so, err := elephantine.NewDefaultServiceOptions(
 		logger, parser, prometheus.NewRegistry(),
@@ -621,4 +665,216 @@ func withSubject(ctx context.Context) context.Context {
 	info.Claims.Subject = "user://test/hugo"
 
 	return ctx
+}
+
+// The fixture service is unary only, since the plain interface every elephant
+// service implements has no place for a stream, so the streaming tests build a
+// server-streaming handler with connect-go's own constructors. It is mounted
+// next to the fixture service on every test stack.
+const (
+	streamPath      = "/elephantine.testservice.v1.Streamer/"
+	streamProcedure = streamPath + "Echo"
+)
+
+// newStreamHandler is a server-streaming handler that answers with one message.
+func newStreamHandler(opts ...connect.HandlerOption) http.Handler {
+	return connect.NewServerStreamHandler(streamProcedure,
+		func(
+			_ context.Context,
+			req *connect.Request[testservice.EchoRequest],
+			stream *connect.ServerStream[testservice.EchoResponse],
+		) error {
+			err := stream.Send(&testservice.EchoResponse{
+				Message: req.Msg.GetMessage(),
+			})
+			if err != nil {
+				return fmt.Errorf("send the message: %w", err)
+			}
+
+			return nil
+		}, opts...)
+}
+
+// newStreamClient is a client for the server-streaming fixture handler.
+func newStreamClient(
+	httpClient connect.HTTPClient, baseURL string,
+) *connect.Client[testservice.EchoRequest, testservice.EchoResponse] {
+	return connect.NewClient[testservice.EchoRequest, testservice.EchoResponse](
+		httpClient, baseURL+streamProcedure,
+		connect.WithClientOptions())
+}
+
+// callStream makes the streaming call and returns the error the caller ends up
+// with, which for a stream is the one the receive loop reports.
+func callStream(
+	ctx context.Context,
+	client *connect.Client[testservice.EchoRequest, testservice.EchoResponse],
+) (string, error) {
+	stream, err := client.CallServerStream(ctx,
+		connect.NewRequest(&testservice.EchoRequest{Message: echoMessage}))
+	if err != nil {
+		return "", err //nolint:wrapcheck // the test asserts on the code.
+	}
+
+	defer func() {
+		_ = stream.Close()
+	}()
+
+	var message string
+
+	for stream.Receive() {
+		message = stream.Msg().GetMessage()
+	}
+
+	err = stream.Err()
+	if err != nil {
+		return "", err //nolint:wrapcheck // the test asserts on the code.
+	}
+
+	return message, nil
+}
+
+// TestStreamingAuthentication checks that a streaming call is authenticated
+// like a unary one. connect.UnaryInterceptorFunc passes streaming calls
+// through untouched, so an interceptor written with it would let an
+// unauthenticated stream run: every interceptor in this package therefore
+// implements the streaming wrappers, and the authentication middleware refuses
+// the call before it reaches them.
+func TestStreamingAuthentication(t *testing.T) {
+	s := newStack(t, testImpl{}, elephantine.ServiceAuthRequired)
+
+	t.Run("authenticated", func(t *testing.T) {
+		message, err := callStream(t.Context(), s.StreamClient(s.Token))
+		test.Mustf(t, err, "call the streaming method")
+
+		test.Equalf(t, echoMessage, message, "echo the message")
+	})
+
+	t.Run("no_authorization", func(t *testing.T) {
+		_, err := callStream(t.Context(), s.StreamClient(""))
+
+		test.IsRPCError(t, err, connect.CodeUnauthenticated)
+	})
+
+	t.Run("invalid_authorization", func(t *testing.T) {
+		_, err := callStream(t.Context(), s.StreamClient("not-a-token"))
+
+		test.IsRPCError(t, err, connect.CodeUnauthenticated)
+	})
+}
+
+// TestStreamingWithoutAuthMiddleware checks the safety net: a handler mounted
+// with the service's handler options but not behind the authentication
+// middleware still refuses an unauthenticated call, unary or streaming, rather
+// than running the handler with no caller.
+func TestStreamingWithoutAuthMiddleware(t *testing.T) {
+	var (
+		logger = slog.New(test.NewLogHandler(t, slog.LevelDebug))
+		key    = test.NewSigningKey(t)
+		parser = elephantine.NewStaticAuthInfoParser(
+			t.Context(), key.PublicKey,
+			elephantine.JWTAuthInfoParserOptions{Issuer: testIssuer})
+	)
+
+	so, err := elephantine.NewDefaultServiceOptions(
+		logger, parser, prometheus.NewRegistry(),
+		elephantine.ServiceAuthRequired)
+	test.Mustf(t, err, "create the default service options")
+
+	mux := http.NewServeMux()
+
+	// Mounted directly, so nothing runs opt.AuthMiddleware.
+	mux.Handle(streamPath, newStreamHandler(so.HandlerOptions()...))
+
+	path, handler := testserviceconnect.NewTestServiceHandler(
+		testImpl{}, so.HandlerOptions()...)
+
+	mux.Handle(path, handler)
+
+	srv := httptest.NewServer(mux)
+
+	t.Cleanup(srv.Close)
+
+	_, err = callStream(t.Context(), newStreamClient(srv.Client(), srv.URL))
+	test.IsRPCError(t, err, connect.CodeUnauthenticated)
+
+	unary := testserviceconnect.NewTestServiceClient(srv.Client(), srv.URL)
+
+	_, err = unary.Echo(t.Context(), &testservice.EchoRequest{})
+	test.IsRPCError(t, err, connect.CodeUnauthenticated)
+}
+
+// TestBareContextErrorCode checks that a handler error that is not a
+// *connect.Error but wraps a context cancellation is counted and logged as
+// canceled, the way Connect answers it, and not as an unknown server fault. It
+// is connect-go's own handler wrapper that returns such an error when the
+// request context is already done, so counting it as unknown would make every
+// disconnected client look like a server error.
+func TestBareContextErrorCode(t *testing.T) {
+	s := newStack(t, testImpl{}, elephantine.ServiceAuthRequired)
+
+	client := s.Clients(s.Token)["connect"]
+
+	_, err := client.Fail(t.Context(),
+		&testservice.FailRequest{Code: codeBareCancellation})
+	test.MustNotf(t, err, "get an error from Fail")
+
+	test.IsRPCError(t, err, connect.CodeCanceled)
+
+	logged := s.Records.Attributes("error response")
+
+	test.Equalf(t, 1, len(logged), "log one error response")
+	test.EqualDiff(t, map[string]string{
+		logKeyLevel:   "WARN",
+		"err_code":    "canceled",
+		"err":         "do the work: context canceled",
+		"status_code": "499",
+	}, logged[0], "log the cancellation as canceled")
+
+	err = testutil.GatherAndCompare(s.Registry, strings.NewReader(`
+# HELP rpc_protocol_responses_total `+rpcmetrics.ProtocolResponsesHelp+`
+# TYPE rpc_protocol_responses_total counter
+rpc_protocol_responses_total{client_id="",code="canceled",method="Fail",protocol="connect",service="Test"} 1
+`), "rpc_protocol_responses_total")
+	test.Mustf(t, err, "count the response under the canceled code")
+
+	err = testutil.GatherAndCompare(s.Registry, strings.NewReader(`
+# HELP rpc_responses_total Number of RPC responses sent.
+# TYPE rpc_responses_total counter
+rpc_responses_total{customer="",method="Fail",service="Test",status="499"} 1
+`), "rpc_responses_total")
+	test.Mustf(t, err, "report the status Connect answers a cancellation with")
+}
+
+// TestGRPCResponseStatus checks that a gRPC response is reported with status
+// 200 whatever the error was, since gRPC carries the code in the trailers and
+// answers every call with 200.
+func TestGRPCResponseStatus(t *testing.T) {
+	s := newStack(t, testImpl{}, elephantine.ServiceAuthRequired)
+
+	var transport http.Transport
+
+	transport.Protocols = new(http.Protocols)
+	transport.Protocols.SetUnencryptedHTTP2(true)
+
+	client := http.Client{
+		Transport: &bearerTransport{
+			token: s.Token,
+			next:  &transport,
+		},
+	}
+
+	grpc := testserviceconnect.NewTestServiceClient(
+		&client, "http://"+s.Addr, connect.WithGRPC())
+
+	_, err := grpc.Fail(t.Context(),
+		&testservice.FailRequest{Code: codeNotFound})
+	test.MustNotf(t, err, "get an error from Fail over gRPC")
+
+	err = testutil.GatherAndCompare(s.Registry, strings.NewReader(`
+# HELP rpc_responses_total Number of RPC responses sent.
+# TYPE rpc_responses_total counter
+rpc_responses_total{customer="",method="Fail",service="Test",status="200"} 1
+`), "rpc_responses_total")
+	test.Mustf(t, err, "report the status gRPC actually answers with")
 }

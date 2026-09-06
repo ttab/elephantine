@@ -38,15 +38,30 @@ func OutgoingHeaders(ctx context.Context) http.Header {
 // because the generated clients are compiled from elephant-api, which must not
 // depend on elephantine.
 func PropagateHeaders() connect.Interceptor {
-	return connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
-		return func(
-			ctx context.Context, req connect.AnyRequest,
-		) (connect.AnyResponse, error) {
-			if req.Spec().IsClient {
-				maps.Copy(req.Header(), OutgoingHeaders(ctx))
-			}
+	return interceptor{
+		unary: func(next connect.UnaryFunc) connect.UnaryFunc {
+			return func(
+				ctx context.Context, req connect.AnyRequest,
+			) (connect.AnyResponse, error) {
+				if req.Spec().IsClient {
+					maps.Copy(req.Header(), OutgoingHeaders(ctx))
+				}
 
-			return next(ctx, req)
-		}
-	})
+				return next(ctx, req)
+			}
+		},
+		streamingClient: func(
+			next connect.StreamingClientFunc,
+		) connect.StreamingClientFunc {
+			return func(
+				ctx context.Context, spec connect.Spec,
+			) connect.StreamingClientConn {
+				conn := next(ctx, spec)
+
+				maps.Copy(conn.RequestHeader(), OutgoingHeaders(ctx))
+
+				return conn
+			}
+		},
+	}
 }

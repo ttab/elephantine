@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"os"
 	"strconv"
 	"time"
 
@@ -49,12 +50,21 @@ func WithMetricsStaticTestLatency(latency time.Duration) MetricsOption {
 //
 // The status label is the HTTP status Connect answers the code with, which for
 // canceled, deadline_exceeded and failed_precondition is not the status Twirp
-// answered with. rpc_protocol_responses_total is the series to read the error
-// breakdown from instead, since it carries the RPC code itself.
+// answered with. It is 200 for a gRPC or a gRPC-Web response, since those
+// protocols answer every call with 200 and carry the code in the trailers;
+// rpc_protocol_responses_total is where their outcome is readable.
 //
 // A call that failed authentication is counted as a response but not as a
 // request, which is also what the hooks report, so the difference between the
-// two series means the same thing on both stacks.
+// two series means the same thing on both stacks. A request the authentication
+// middleware refuses never reaches an interceptor at all; the middleware counts
+// that response itself, the same way.
+//
+// Framework-level failures on the Connect stack are not counted here, because
+// connect-go answers them before it calls an interceptor: a malformed body, an
+// unsupported content type, an unknown method and an oversized body are all
+// answered by the protocol handler. Twirp reports those through its hooks, so
+// the two stacks differ for requests that never reach a method.
 func MetricsInterceptor(
 	reg prometheus.Registerer, opts ...MetricsOption,
 ) (connect.Interceptor, error) {
@@ -73,87 +83,143 @@ func MetricsInterceptor(
 		return nil, err
 	}
 
-	return connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
-		return func(
-			ctx context.Context, req connect.AnyRequest,
-		) (connect.AnyResponse, error) {
-			var (
-				service, method = splitProcedure(req.Spec().Procedure)
-				customer        = opt.customer(ctx)
-				start           = time.Now()
-			)
+	observe := func(
+		ctx context.Context, procedure string, protocol string,
+		start time.Time, err error,
+	) {
+		var (
+			service, method = splitProcedure(procedure)
+			customer        = opt.customer(ctx)
+			clientID        = auth.ClientIDFromContext(ctx)
+		)
 
-			// A call the authentication middleware refused is not
-			// counted as a request, only as a response. That is
-			// what the Twirp stack reports: its metrics hook
-			// increments the counter from RequestRouted, which
-			// twirp.ChainHooks never reaches once the
-			// authentication hook ahead of it has returned an
-			// error.
-			if auth.GetError(ctx) == nil {
-				metrics.Requests.WithLabelValues(
-					service, method, customer).Inc()
-			}
-
-			res, err := next(ctx, req)
-
-			duration := time.Since(start).Seconds()
-			if opt.testLatency != 0 {
-				duration = opt.testLatency.Seconds()
-			}
-
-			metrics.Duration.WithLabelValues(
-				service, method, customer).Observe(duration)
-
-			metrics.Responses.WithLabelValues(
-				service, method, responseStatus(err), customer).Inc()
-
-			metrics.ProtocolResponses.WithLabelValues(
-				service, method,
-				protocolLabel(req.Peer().Protocol),
-				responseCode(err),
-			).Inc()
-
-			return res, err
+		duration := time.Since(start).Seconds()
+		if opt.testLatency != 0 {
+			duration = opt.testLatency.Seconds()
 		}
-	}), nil
+
+		metrics.Duration.WithLabelValues(
+			service, method, customer).Observe(duration)
+
+		metrics.Responses.WithLabelValues(
+			service, method,
+			ResponseStatus(err, protocol), customer).Inc()
+
+		metrics.ProtocolResponses.WithLabelValues(
+			service, method, protocol, codeLabel(err), clientID,
+		).Inc()
+	}
+
+	countRequest := func(ctx context.Context, procedure string) {
+		service, method := splitProcedure(procedure)
+
+		metrics.Requests.WithLabelValues(
+			service, method, opt.customer(ctx)).Inc()
+	}
+
+	return interceptor{
+		unary: func(next connect.UnaryFunc) connect.UnaryFunc {
+			return func(
+				ctx context.Context, req connect.AnyRequest,
+			) (connect.AnyResponse, error) {
+				start := time.Now()
+
+				countRequest(ctx, req.Spec().Procedure)
+
+				res, err := next(ctx, req)
+
+				observe(ctx, req.Spec().Procedure,
+					ProtocolLabel(req.Peer().Protocol),
+					start, err)
+
+				return res, err
+			}
+		},
+		streamingHandler: func(
+			next connect.StreamingHandlerFunc,
+		) connect.StreamingHandlerFunc {
+			return func(
+				ctx context.Context, conn connect.StreamingHandlerConn,
+			) error {
+				start := time.Now()
+
+				countRequest(ctx, conn.Spec().Procedure)
+
+				err := next(ctx, conn)
+
+				observe(ctx, conn.Spec().Procedure,
+					ProtocolLabel(conn.Peer().Protocol),
+					start, err)
+
+				return err
+			}
+		},
+	}, nil
 }
 
-// responseStatus is the HTTP status the response will be sent with, as a
-// string, which is the form twirp.StatusCode reports it in.
-func responseStatus(err error) string {
+// ResponseStatus is the HTTP status a response is sent with, as a string, which
+// is the form twirp.StatusCode reports it in. gRPC and gRPC-Web answer every
+// call with 200 and carry the code in the trailers, so a response on those
+// protocols is reported as 200 whatever the error was.
+func ResponseStatus(err error, protocol string) string {
+	switch protocol {
+	case rpcmetrics.ProtocolGRPC, rpcmetrics.ProtocolGRPCWeb:
+		return "200"
+	}
+
 	if err == nil {
 		return "200"
 	}
 
-	return strconv.Itoa(HTTPStatus(responseConnectCode(err)))
+	return strconv.Itoa(HTTPStatus(ResponseCode(err)))
 }
 
-// responseCode is the RPC code of the response, or "ok" for a response that
+// codeLabel is the RPC code of the response, or "ok" for a response that
 // carried no error.
-func responseCode(err error) string {
+func codeLabel(err error) string {
 	if err == nil {
 		return rpcmetrics.CodeOK
 	}
 
-	return responseConnectCode(err).String()
+	return ResponseCode(err).String()
 }
 
-// responseConnectCode is the code Connect will answer the error with. An
-// uncoded error is answered with unknown, which is what Connect itself does.
-func responseConnectCode(err error) connect.Code {
-	cErr, ok := errors.AsType[*connect.Error](err)
-	if !ok {
+// ResponseCode is the code Connect answers an error with. A *connect.Error
+// carries its own code; an error that is not one but that wraps a context
+// cancellation or a deadline is answered canceled or deadline_exceeded, the way
+// connect-go itself codes it; anything else is unknown.
+//
+// The context codes matter because connect-go returns a bare context error from
+// its own handler wrapper when the request context is already done, so a caller
+// that disconnected or that ran out of its Connect-Timeout-Ms would otherwise
+// be counted and logged as an unknown server fault.
+func ResponseCode(err error) connect.Code {
+	if err == nil {
 		return connect.CodeUnknown
 	}
 
-	return cErr.Code()
+	cErr, ok := errors.AsType[*connect.Error](err)
+	if ok {
+		return cErr.Code()
+	}
+
+	switch {
+	case errors.Is(err, context.Canceled):
+		return connect.CodeCanceled
+	case errors.Is(err, context.DeadlineExceeded),
+		errors.Is(err, os.ErrDeadlineExceeded):
+		// Some dial errors surface as os.ErrDeadlineExceeded rather than
+		// context.DeadlineExceeded, which is why connect-go checks both.
+		return connect.CodeDeadlineExceeded
+	}
+
+	return connect.CodeUnknown
 }
 
-// protocolLabel maps connect-go's protocol name to the protocol label value.
+// ProtocolLabel maps connect-go's protocol name to the protocol label value.
 // Only the spelling of gRPC-Web differs; a protocol connect-go adds later is
 // bucketed as "other" rather than put into the label space unannounced.
-func protocolLabel(protocol string) string {
+func ProtocolLabel(protocol string) string {
 	switch protocol {
 	case connect.ProtocolConnect:
 		return rpcmetrics.ProtocolConnect

@@ -9,6 +9,7 @@ package rpcmetrics
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -21,6 +22,7 @@ const (
 	LabelCustomer = "customer"
 	LabelProtocol = "protocol"
 	LabelCode     = "code"
+	LabelClientID = "client_id"
 )
 
 // Protocol label values. They are the RPC protocols a dual-stack service
@@ -36,13 +38,16 @@ const (
 // CodeOK is the code label value used for a response that carried no error.
 const CodeOK = "ok"
 
-// protocolResponsesHelp is the help text for rpc_protocol_responses_total.
-const protocolResponsesHelp = "Number of RPC responses sent, by protocol and" +
-	" RPC code. Traffic on protocol=\"twirp\" is what still keeps a" +
-	" service's Twirp mount alive, so a method whose Twirp share has" +
-	" reached zero can have it removed; the code label separates errors" +
-	" that rpc_responses_total reports under a single HTTP status, such" +
-	" as a lock conflict from a validation failure."
+// ProtocolResponsesHelp is the help text for rpc_protocol_responses_total. It
+// is exported so that the tests can compare the exposition format against it
+// rather than repeating it.
+const ProtocolResponsesHelp = "Number of RPC responses sent, by protocol, RPC" +
+	" code and calling client. Traffic on protocol=\"twirp\" is what still" +
+	" keeps a service's Twirp mount alive, so a method whose Twirp share has" +
+	" reached zero can have it removed, and client_id names the application" +
+	" that has to move before it can; the code label separates errors that" +
+	" rpc_responses_total reports under a single HTTP status, such as a lock" +
+	" conflict from a validation failure."
 
 // Metrics is the RPC server metric set.
 type Metrics struct {
@@ -52,7 +57,8 @@ type Metrics struct {
 	Duration *prometheus.HistogramVec
 	// Responses counts sent responses by HTTP status.
 	Responses *prometheus.CounterVec
-	// ProtocolResponses counts sent responses by protocol and RPC code.
+	// ProtocolResponses counts sent responses by protocol, RPC code and
+	// calling client.
 	ProtocolResponses *prometheus.CounterVec
 }
 
@@ -99,9 +105,12 @@ func New(reg prometheus.Registerer) (*Metrics, error) {
 	protocolResponses, err := registerOrReuse(reg, prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "rpc_protocol_responses_total",
-			Help: protocolResponsesHelp,
+			Help: ProtocolResponsesHelp,
 		},
-		[]string{LabelService, LabelMethod, LabelProtocol, LabelCode},
+		[]string{
+			LabelService, LabelMethod, LabelProtocol, LabelCode,
+			LabelClientID,
+		},
 	))
 	if err != nil {
 		return nil, err
@@ -141,4 +150,41 @@ func registerOrReuse[C prometheus.Collector](
 	}
 
 	return c, nil
+}
+
+// SplitProcedure splits an RPC procedure or request path into the short service
+// name and the method name, which is how both stacks label a series. It takes
+// the Connect procedure "/elephant.repository.Documents/Get" and the Twirp
+// request path "/twirp/elephant.repository.Documents/Get" alike, since the two
+// differ only in the prefix ahead of the fully qualified service name. ok is
+// false for anything that does not name a service and a method.
+func SplitProcedure(procedure string) (string, string, bool) {
+	trimmed := strings.Trim(procedure, "/")
+
+	i := strings.LastIndex(trimmed, "/")
+	if i == -1 {
+		return "", "", false
+	}
+
+	var (
+		service = trimmed[:i]
+		method  = trimmed[i+1:]
+	)
+
+	// Drop everything ahead of the fully qualified service name, which is a
+	// Twirp path prefix, and then the package, which leaves the short
+	// service name twirp.ServiceName reports.
+	if j := strings.LastIndex(service, "/"); j != -1 {
+		service = service[j+1:]
+	}
+
+	if k := strings.LastIndex(service, "."); k != -1 {
+		service = service[k+1:]
+	}
+
+	if service == "" || method == "" {
+		return "", "", false
+	}
+
+	return service, method, true
 }
