@@ -64,7 +64,7 @@ The application package takes a `prometheus.Registerer` parameter; only
 the injected registerer:
 
 - job locks via `joblock.Options{MetricsRegisterer: ...}`
-- Twirp hooks via `elephantine.WithTwirpMetricsRegisterer(...)`
+- RPC hooks and interceptors via `elephantine.ServiceOptions.AddMetricsHooks(reg, ...)`
 - error groups via `elephantine.WithErrGroupMetricsRegisterer(...)`
 - FanOut recovery via the shared `MetricsHelper`
 
@@ -86,13 +86,61 @@ Every service should have:
    binary, and every outbound client instrumented under its own name
    (`repository`, `assets`, `s3`, `oidc`, `jwks`, ...), one name per
    dependency.
-4. **RPC** — Twirp metrics hooks with `WithTwirpMetricsCustomerFunc`
+4. **RPC** — `ServiceOptions.AddMetricsHooks(reg,
+   elephantine.WithTwirpMetricsCustomerFunc(...))` with the customer function
    returning the caller's org claim. The org is bounded; the subject would
-   put one label value per API client into every RPC series. Hook order
-   matters: auth hooks must run before the metrics hooks.
+   put one label value per API client into every RPC series. The function is
+   passed on to the Connect interceptor, so the label means the same thing on
+   both stacks.
 5. **Task groups** — top-level subsystems run under
    `elephantine.NewErrGroup` so panics are recovered and restarts are
    counted in `task_restarts_total`.
+
+## RPC metrics
+
+The RPC server metrics are declared by the library, once, and shared between
+the Twirp hooks and the Connect interceptor, so a service serving both
+protocols reports one set of series whichever stack registers first.
+
+| Metric | Labels | What a change means |
+|---|---|---|
+| `rpc_requests_total` | `service`, `method`, `customer` | Requests that reached a handler. A drop for a method that normally sees steady traffic is a caller that has stopped calling, or an ingress that has stopped routing. A call refused by authentication is counted as a response and not as a request, on both stacks, so a gap between the two series is callers being turned away at the door. |
+| `rpc_duration_seconds` | `service`, `method`, `customer` | Handler runtime. A rising high percentile on one method is that method's dependency, not the service as a whole. |
+| `rpc_responses_total` | `service`, `method`, `status`, `customer` | Responses by HTTP status. Note that Connect answers `failed_precondition` with `400` where Twirp answered `412`, so a lock conflict is not visible as a status any more. |
+| `rpc_protocol_responses_total` | `service`, `method`, `protocol`, `code`, `client_id` | Responses by protocol, RPC code and calling client. `protocol="twirp"` going to zero for a method is what says its Twirp mount can be removed, and `client_id` names the applications that still have to move before it can; a rising `code` share is the error breakdown `rpc_responses_total` cannot give, since several codes share a status. |
+
+`service` is the short service name (`Documents`), the same value on both
+stacks. `protocol` is one of `twirp`, `connect`, `grpc`, `grpc-web`, or
+`other` for a protocol connect-go adds later. `code` is the RPC code string
+(`not_found`, `failed_precondition`) or `ok`. `client_id` is the `client_id`
+claim of the caller's token, falling back to the authorized party (`azp`), and
+is empty for an anonymous caller and for a call authentication refused.
+
+`status` is the HTTP status actually sent, so `failed_precondition` is `412` on
+Twirp and `400` on Connect, and every gRPC and gRPC-Web response is `200`:
+those protocols answer 200 and carry the code in the trailers, so their outcome
+is only readable in `rpc_protocol_responses_total`.
+
+What the series do not cover:
+
+- **Framework-level failures on the Connect stack are uncounted.** connect-go
+  answers a malformed body, an unsupported content type, an unknown method and
+  a body that streams past the request limit itself, before it calls an
+  interceptor, so none of them reach the metrics. The Twirp stack counts the
+  same failures through its hooks, as `malformed` and `bad_route`, which means
+  the two stacks are comparable for the calls that reached a method and not for
+  the requests that never named one. A Connect mount that is being probed shows
+  up in the ingress logs rather than here.
+- **A call the authentication middleware refuses is counted as a response and
+  not as a request**, on both stacks, so a gap between the two series is
+  callers being turned away at the door. The middleware answers those requests
+  itself and reports them itself; the `client_id` label is empty for them,
+  since the caller was never identified.
+- **A handler error that wraps a context cancellation or a deadline without
+  being a `*connect.Error`** is reported as `canceled` or `deadline_exceeded`,
+  the code Connect answers it with, rather than `unknown`. Growth in
+  `code="unknown"` is therefore a real server fault and not a client that hung
+  up.
 
 ## Job lock alerting
 

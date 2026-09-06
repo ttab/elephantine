@@ -1,0 +1,9 @@
+syntax = "proto3";
+package elephantine.rpc;
+option go_package = "github.com/ttab/elephantine/rpc";
+
+// ErrorMeta carries free-form key/value error metadata. It replaces the
+// Twirp error meta map and is flattened back into it by the Twirp adapter.
+message ErrorMeta {
+  map<string, string> meta = 1;
+}

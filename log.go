@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"runtime/debug"
+
+	"github.com/ttab/elephantine/internal/logmeta"
 )
 
 // Log attribute keys used throughout the application.
@@ -124,13 +126,6 @@ func SetUpLogger(logLevel string, w io.Writer) *slog.Logger {
 	return logger
 }
 
-type ctxKey int
-
-const (
-	logCtxKey      ctxKey = 1
-	authInfoCtxKey ctxKey = 2
-)
-
 // LogMetadataMiddleware wraps an http.Handler with a middleware that adds a log
 // metadata map to the request context.
 func LogMetadataMiddleware(next http.Handler) http.Handler {
@@ -152,30 +147,18 @@ func LogMetadataMiddleware(next http.Handler) http.Handler {
 
 // WithLogMetadata creates a child context with a log metadata map.
 func WithLogMetadata(ctx context.Context) context.Context {
-	m := make(map[string]any)
-
-	return context.WithValue(ctx, logCtxKey, m)
+	return logmeta.With(ctx)
 }
 
 // GetLogMetadata returns the log metatada map for the context.
 func GetLogMetadata(ctx context.Context) map[string]any {
-	m, ok := ctx.Value(logCtxKey).(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	return m
+	return logmeta.Get(ctx)
 }
 
 // SetLogMetadata sets a log metadata value on the context if it has a log
 // metadata map.
 func SetLogMetadata(ctx context.Context, key string, value any) {
-	m, ok := ctx.Value(logCtxKey).(map[string]any)
-	if !ok {
-		return
-	}
-
-	m[key] = value
+	logmeta.Set(ctx, key, value)
 }
 
 type contextHandler struct {

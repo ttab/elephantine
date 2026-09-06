@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package testrpc.v1;
+
+// The go_package is overridden per variant by the golden test, which
+// generates this fixture once with interface=false and once with
+// interface=true.
+option go_package = "github.com/ttab/elephantine/cmd/protoc-gen-elephant-rpc/testdata/testrpc/v1;testrpcv1";
+
+// Document is the message the fixture services pass around. This file has no
+// services, so the plugin must not generate anything for it.
+message Document {
+  // uuid identifies the document.
+  string uuid = 1;
+  // title is the human readable name of the document.
+  string title = 2;
+  // version is the version number of the document.
+  int64 version = 3;
+}
+
+// Schema describes the shape a document type has to have.
+message Schema {
+  string name = 1;
+  string version = 2;
+  bytes specification = 3;
+}

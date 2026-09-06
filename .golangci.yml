@@ -61,6 +61,26 @@ linters:
         - elephantine.InvalidArgumentf(
         - (context.Context).Err(
         - github.com/ttab/elephantine/pg.WithTX(
+        # The rpc package's whole job is to produce errors that are already
+        # coded RPC errors, and to move them between the two vocabularies.
+        # Wrapping one of those turns it into an uncoded error.
+        - github.com/ttab/elephantine/rpc.Errorf(
+        - github.com/ttab/elephantine/rpc.InvalidArgument(
+        - github.com/ttab/elephantine/rpc.InvalidArgumentf(
+        - github.com/ttab/elephantine/rpc.RequiredArgument(
+        - github.com/ttab/elephantine/rpc.NotFound(
+        - github.com/ttab/elephantine/rpc.AlreadyExists(
+        - github.com/ttab/elephantine/rpc.Unauthenticated(
+        - github.com/ttab/elephantine/rpc.Internalf(
+        - github.com/ttab/elephantine/rpc.FailedPreconditionf(
+        - github.com/ttab/elephantine/rpc.PermissionDeniedf(
+        - github.com/ttab/elephantine/rpc.WithMeta(
+        - github.com/ttab/elephantine/rpc.ToTwirp(
+        - github.com/ttab/elephantine/rpc.FromTwirp(
+        - github.com/ttab/elephantine/rpc.RequireAnyScope(
+        - github.com/ttab/elephantine/internal/auth.GetError(
+        - github.com/ttab/elephantine/internal/rpcmetrics.New(
+        - (*connectrpc.com/connect.Error).Unwrap(
   exclusions:
     generated: lax
     presets:
