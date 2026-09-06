@@ -6,9 +6,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/magefile/mage/mg"
 	"github.com/magefile/mage/sh"
+	"github.com/ttab/elephantine/internal/protogen"
 	"github.com/ttab/mage/rpc"
 )
 
@@ -26,8 +28,36 @@ var protoPaths = []string{"rpc", "internal/testservice"}
 //
 // The rpc:generate target in ttab/mage cannot be used here: it discovers
 // services as "<proto root>/*/service.proto", and neither of the sources in
-// this repository is laid out that way.
+// this repository is laid out that way. What that target does to keep
+// generation reproducible is mirrored instead: every generator runs under the
+// pinned toolchain with -mod out of the way, and protoc-gen-twirp runs out of
+// the module in internal/protogen/twirpgen rather than at a bare version,
+// since it has no go.mod of its own and would otherwise resolve its
+// dependencies afresh on every run.
 func (Proto) Generate() error {
+	env, err := protogen.Env()
+	if err != nil {
+		return fmt.Errorf("resolve the generator environment: %w", err)
+	}
+
+	// The protoc-gen-twirp module is written here for the length of the
+	// run. The plugins buf spawns take nothing from it but the command
+	// line, so the directory only has to outlive buf.
+	work, err := os.MkdirTemp("", "elephantine-proto-")
+	if err != nil {
+		return fmt.Errorf(
+			"create the generator working directory: %w", err)
+	}
+
+	defer func() {
+		_ = os.RemoveAll(work)
+	}()
+
+	twirp, err := protogen.TwirpGenerator(work)
+	if err != nil {
+		return fmt.Errorf("write the protoc-gen-twirp module: %w", err)
+	}
+
 	template, err := json.Marshal(map[string]any{
 		"version": "v2",
 		"plugins": []map[string]any{
@@ -52,10 +82,9 @@ func (Proto) Generate() error {
 				"opt":   []string{"paths=source_relative"},
 			},
 			{
-				"local": goRun("github.com/twitchtv/twirp/protoc-gen-twirp",
-					rpc.TwirpVersion),
-				"out": ".",
-				"opt": []string{"paths=source_relative"},
+				"local": twirp,
+				"out":   ".",
+				"opt":   []string{"paths=source_relative"},
 			},
 		},
 	})
@@ -69,7 +98,7 @@ func (Proto) Generate() error {
 		args = append(args, "--path", p)
 	}
 
-	err = sh.RunV("go", append([]string{
+	err = sh.RunWithV(env, "go", append([]string{
 		"run", "github.com/bufbuild/buf/cmd/buf@" + rpc.BufVersion,
 	}, args...)...)
 	if err != nil {

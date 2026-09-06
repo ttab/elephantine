@@ -235,9 +235,16 @@ Changes:
 - `mage proto:generate` compiles the protobuf sources in this repository with
   buf and the plugin versions `github.com/ttab/mage/rpc` pins. `google.golang.org/protobuf`
   moves to v1.36.12 to match the `protoc-gen-go` the committed code is generated
-  with.
+  with. The generated code is a function of those pins and not of the machine
+  that ran them: the generators are invoked under the pinned toolchain, and
+  `protoc-gen-twirp` runs out of the module in `internal/protogen/twirpgen`
+  rather than at a bare version, because it has no `go.mod` of its own and the
+  gzipped descriptor it embeds changed with `compress/flate` between Go 1.26 and
+  Go 1.27. `TestTwirpModulePins` fails when that module drifts from the fleet's
+  pins.
 - Dependency upgrades: `MicahParks/keyfunc` to v3.8.2, `urfave/cli` to v3.11.0,
-  and the Prometheus and `golang.org/x` support modules.
+  `github.com/ttab/mage` to the `rpc` namespace it generates with, and the
+  Prometheus and `golang.org/x` support modules.
 - The README gained a "Serving Connect and Twirp" section with the error helper
   table and the mount, and `docs/metrics.md` an "RPC metrics" section saying
   what a change in each of the four series means.

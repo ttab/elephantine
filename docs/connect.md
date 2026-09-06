@@ -440,6 +440,20 @@ repository. Per service it writes `service.pb.go`,
 `service.rpc.go` (the plain interface) when Twirp is off. Nothing else: the
 OpenAPI specifications are gone (decision 8).
 
+The output is a function of the pins, not of the machine. Every generator runs
+with `GOTOOLCHAIN` set to the toolchain `rpc.GeneratorToolchain` names and with
+any `-mod` flag taken out of `GOFLAGS`, and `protoc-gen-twirp` is run out of a
+small module `ttab/mage` carries rather than as `go run <module>@<version>`:
+it is a `+incompatible` module with no `go.mod`, so it would otherwise resolve
+`google.golang.org/protobuf` afresh on every run, and the gzipped file
+descriptor it embeds comes out of `compress/flate`, whose output changed
+between Go 1.26 and Go 1.27. Without both pins the same declaration gives a
+different `service.twirp.go` on two developers' machines, and a drift check
+fires on the toolchain rather than on the declaration. This repository
+generates its own protobuf sources with `mage proto:generate` rather than
+`rpc:generate`, because of how they are laid out, and mirrors both pins in
+`internal/protogen`.
+
 A repository that imports a `.proto` from another module vendors it with
 `mage rpc:vendorProto <module> <file>`; the only case in the fleet is
 `newsdoc/newsdoc.proto` from elephant-api. The target is idempotent, so CI can

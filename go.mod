@@ -16,7 +16,7 @@ require (
 	github.com/magefile/mage v1.17.2
 	github.com/prometheus/client_golang v1.24.1
 	github.com/ryanuber/go-glob v1.0.0
-	github.com/ttab/mage v0.12.1-0.20260906054633-c20d3132ec99
+	github.com/ttab/mage v0.12.1-0.20260906115506-1fdd25ad152b
 	github.com/twitchtv/twirp v8.1.3+incompatible
 	github.com/urfave/cli/v3 v3.11.0
 	golang.org/x/oauth2 v0.36.0
@@ -50,6 +50,7 @@ require (
 	github.com/prometheus/client_model v0.6.3 // indirect
 	github.com/prometheus/common v0.71.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
