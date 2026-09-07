@@ -3,7 +3,7 @@ package test
 import (
 	"context"
 	"log/slog"
-	"sync/atomic"
+	"sync"
 )
 
 // TestingLogger is satisfied by *testing.T and *testing.B.
@@ -18,6 +18,10 @@ type TestingLogger interface {
 // Deprecated: use TestingLogger.
 type Logger = TestingLogger
 
+// NewLogHandler returns a slog.Handler that logs through t. Once t's cleanup
+// has run the handler silently drops further records: the cleanup and the
+// write into t.Log are serialised, so a record either reaches t.Log before the
+// cleanup returns, while logging is still legal, or is dropped.
 func NewLogHandler(t TestingLogger, level slog.Level) slog.Handler {
 	h := LogHandler{
 		t: t,
@@ -28,7 +32,10 @@ func NewLogHandler(t TestingLogger, level slog.Level) slog.Handler {
 	})
 
 	t.Cleanup(func() {
-		h.done.Store(true)
+		h.mu.Lock()
+		defer h.mu.Unlock()
+
+		h.done = true
 	})
 
 	return &h
@@ -38,17 +45,22 @@ func NewLogHandler(t TestingLogger, level slog.Level) slog.Handler {
 // TestingLogger's Log method, so log output is attributed to the running test.
 // Once the test's cleanup has run it silently drops further records. Create it
 // with NewLogHandler.
+//
+// Every record, including those from handlers derived with WithAttrs and
+// WithGroup, is written through Write, which is where the guard lives.
 type LogHandler struct {
 	t       TestingLogger
 	handler *slog.TextHandler
-	done    atomic.Bool
+
+	// mu serialises Write against the cleanup that stops it, and guards
+	// done. The cleanup cannot return while a write is in flight, so a
+	// write that has passed the done check is guaranteed to reach t.Log
+	// before the test is marked complete.
+	mu   sync.Mutex
+	done bool
 }
 
 func (h *LogHandler) Handle(ctx context.Context, r slog.Record) error {
-	if h.done.Load() {
-		return nil
-	}
-
 	return h.handler.Handle(ctx, r) //nolint:wrapcheck
 }
 
@@ -61,15 +73,16 @@ func (h *LogHandler) WithGroup(name string) slog.Handler {
 }
 
 func (h *LogHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	if h.done.Load() {
-		return false
-	}
-
 	return h.handler.Enabled(ctx, level)
 }
 
+// Write is the io.Writer the TextHandler and all its clones write to. It must
+// not be called while holding h.mu.
 func (h *LogHandler) Write(data []byte) (int, error) {
-	if h.done.Load() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.done {
 		return len(data), nil
 	}
 

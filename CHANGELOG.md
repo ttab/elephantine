@@ -4,6 +4,40 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
+## [v0.29.1] - Unreleased
+
+**Test flake fix (`test.NewLogHandler`):** a package whose tests log through the
+test log handler could have its whole test binary killed by `panic: Log in
+goroutine after TestX has completed`, or the `panic: Write called after TestX
+has completed` variant, naming whichever test happened to finish last. Every
+test in the package failed with it, and the named test was rarely the one at
+fault, so it read as unrelated flakiness. The handler dropped records logged
+after the test by checking a flag its `t.Cleanup` set, but that check and the
+`t.Log` it guarded were not atomic with respect to the cleanup: a goroutine that
+read the flag as unset, was preempted, and resumed after the test had been
+marked complete then called `t.Log` on a finished test. `Write` now serialises
+against the cleanup with a mutex, so a record either reaches `t.Log` before the
+cleanup returns, while logging is still legal, or is dropped. Upgrading is the
+whole fix; no consumer code changes. The panics understated how often this
+fired: only a straggler from the last test to complete panics, and one from any
+other test was silently appended to the root test's output instead, so a
+consumer that logs from a worker on `t.Context()` cancellation has been hitting
+this window without seeing it.
+
+Changes:
+
+- `test.LogHandler.Handle` and `test.LogHandler.Enabled` no longer short-circuit
+  once the test has completed. The guard lives in `Write`, which every record
+  passes through, including records from handlers derived with `WithAttrs` and
+  `WithGroup` — which the early exits never covered, since those return bare
+  `slog.TextHandler` clones. A straggling record is now formatted and then
+  dropped rather than dropped before formatting.
+- `test.LogHandler` holds a mutex, so a `LogHandler` value must not be copied;
+  create it with `NewLogHandler`, which returns a pointer. A `TestingLogger`
+  whose `Log` blocks now delays the test's cleanup for as long as it blocks
+  instead of racing past it, and one that logs back through the same handler
+  would deadlock — `*testing.T` and `*testing.B` do neither.
+
 ## [v0.29.0] - 2026-09-06
 
 **Breaking (authentication):** `ServiceOptions.SetAuthInfoValidation` is
