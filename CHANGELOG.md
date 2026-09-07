@@ -4,7 +4,7 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
-## [v0.29.1] - Unreleased
+## [v0.29.1] - 2026-09-07
 
 **Test flake fix (`test.NewLogHandler`):** a package whose tests log through the
 test log handler could have its whole test binary killed by `panic: Log in
