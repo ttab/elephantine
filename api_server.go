@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -88,6 +90,27 @@ func APIServerMaxBodyBytes(n int64) APIServerOption {
 // http.MaxBytesReader body, so a chunked or lying request fails when the
 // handler reads past the limit. A limit of zero or less is no limit.
 func MaxBodyBytesMiddleware(n int64, handler http.Handler) http.Handler {
+	return maxBodyBytesMiddleware(n, nil, handler)
+}
+
+// maxBodyBytesMiddleware is MaxBodyBytesMiddleware with an exemption from the
+// http.MaxBytesReader wrap.
+//
+// The reader counts the bytes read over the life of the request, and for a
+// client or bidirectional stream the request body is the stream, so such a
+// stream would die the moment its cumulative traffic passed the limit. The
+// APIServer exempts the Connect subtrees for that reason and bounds them per
+// message with connect.WithReadMaxBytes instead; everything else — the Twirp
+// services and whatever a service mounts on the Mux itself — keeps the
+// stream-level limit, which is what stops one caller pinning an unbounded
+// allocation per in-flight request.
+//
+// The declared-Content-Length refusal is applied to every request either way.
+// A stream declares no Content-Length, so it costs a stream nothing and keeps
+// the cheap 413 for a caller that announces an oversized unary body.
+func maxBodyBytesMiddleware(
+	n int64, exempt func(path string) bool, handler http.Handler,
+) http.Handler {
 	if n <= 0 {
 		return handler
 	}
@@ -101,12 +124,28 @@ func MaxBodyBytesMiddleware(n int64, handler http.Handler) http.Handler {
 			return
 		}
 
-		if r.Body != nil {
+		if r.Body != nil && (exempt == nil || !exempt(r.URL.Path)) {
 			r.Body = http.MaxBytesReader(w, r.Body, n)
 		}
 
 		handler.ServeHTTP(w, r)
 	})
+}
+
+// DefaultShutdownTimeout is how long an APIServer waits for its in-flight
+// requests after its context has been cancelled, unless
+// APIServerShutdownTimeout says otherwise. The drain is closed first, so a
+// streaming handler that watches its context has this long to flush and
+// return before its connection is closed underneath it.
+const DefaultShutdownTimeout = 10 * time.Second
+
+// APIServerShutdownTimeout sets how long the server waits for in-flight
+// requests when it is shutting down, overriding DefaultShutdownTimeout. A
+// service whose streams flush before they close needs more than the default.
+func APIServerShutdownTimeout(d time.Duration) APIServerOption {
+	return func(s *APIServer) {
+		s.shutdownTimeout = d
+	}
 }
 
 func APIServerTLS(addr string, certFile string, keyFile string) APIServerOption {
@@ -210,14 +249,15 @@ func newAPIServer(
 	opts ...APIServerOption,
 ) *APIServer {
 	s := APIServer{
-		testServer:   testServer,
-		logger:       logger,
-		addr:         addr,
-		profileAddr:  profileAddr,
-		handler:      handler,
-		maxBodyBytes: DefaultMaxBodyBytes,
-		Mux:          http.NewServeMux(),
-		Health:       health,
+		testServer:      testServer,
+		logger:          logger,
+		addr:            addr,
+		profileAddr:     profileAddr,
+		handler:         handler,
+		maxBodyBytes:    DefaultMaxBodyBytes,
+		shutdownTimeout: DefaultShutdownTimeout,
+		Mux:             http.NewServeMux(),
+		Health:          health,
 		CORS: &CORSOptions{
 			AllowInsecure:          false,
 			AllowInsecureLocalhost: true,
@@ -272,13 +312,75 @@ type APIServer struct {
 	keyFile     string
 	handler     *handlerWrapper
 
-	appVersion   string
-	modules      []string
-	maxBodyBytes int64
+	appVersion      string
+	modules         []string
+	maxBodyBytes    int64
+	shutdownTimeout time.Duration
+
+	// mounts guards the registration state the request path and the
+	// shutdown read back: the Connect subtrees, which are exempt from the
+	// stream-level body limit, and the drains to close when the server
+	// starts shutting down.
+	mounts          sync.Mutex
+	connectPrefixes []string
+	drains          []*drainSignal
 
 	Mux    *http.ServeMux
 	Health *HealthServer
 	CORS   *CORSOptions
+}
+
+// registerConnectPrefix records a Connect subtree, which is exempt from the
+// stream-level request body limit.
+func (s *APIServer) registerConnectPrefix(path string) {
+	s.mounts.Lock()
+	defer s.mounts.Unlock()
+
+	s.connectPrefixes = append(s.connectPrefixes, path)
+}
+
+// isConnectPath reports whether the request path is under a Connect subtree.
+func (s *APIServer) isConnectPath(path string) bool {
+	s.mounts.Lock()
+	defer s.mounts.Unlock()
+
+	for _, prefix := range s.connectPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// registerDrain records the shutdown drain of a registered service's options,
+// so that the server can close it when it starts shutting down. The same
+// options value is normally used for every service, so the drain is only
+// recorded once.
+func (s *APIServer) registerDrain(d *drainSignal) {
+	if d == nil {
+		return
+	}
+
+	s.mounts.Lock()
+	defer s.mounts.Unlock()
+
+	if slices.Contains(s.drains, d) {
+		return
+	}
+
+	s.drains = append(s.drains, d)
+}
+
+// startDraining tells the streaming handlers of every registered service that
+// the server is shutting down.
+func (s *APIServer) startDraining() {
+	s.mounts.Lock()
+	defer s.mounts.Unlock()
+
+	for _, d := range s.drains {
+		d.start()
+	}
 }
 
 func (s *APIServer) Addr() string {
@@ -317,6 +419,8 @@ func (s *APIServer) RegisterAPIs(
 func (s *APIServer) RegisterAPI(
 	api APIServiceHandler, opt ServiceOptions,
 ) {
+	s.registerDrain(opt.drain)
+
 	s.Mux.Handle("POST "+api.PathPrefix(), HTTPErrorHandlerFunc(func(
 		w http.ResponseWriter, r *http.Request,
 	) error {
@@ -336,15 +440,25 @@ func (s *APIServer) RegisterAPI(
 // middleware as the Twirp services. Pass it the path and handler a generated
 // New<Service>ServiceHandler returns:
 //
-//	server.RegisterConnect(documentsv1connect.NewDocumentsServiceHandler(
-//		svc, opt.HandlerOptions()...))
+//	path, handler := documentsv1connect.NewDocumentsServiceHandler(
+//		svc, opt.HandlerOptions()...)
+//
+//	server.RegisterConnect(path, handler, opt)
 //
 // The path is a subtree, and no method is bound, since Connect serves gRPC and
 // gRPC-Web on the same path and may answer GET for the RPCs that declare
 // themselves free of side effects.
+//
+// The subtree is exempt from the stream-level request body limit: connect-go
+// bounds a Connect request per message instead, through
+// ServiceOptions.MaxMessageBytes, since a client or bidirectional stream's
+// request body is the stream and a cumulative limit would end it mid-call.
 func (s *APIServer) RegisterConnect(
 	path string, h http.Handler, opt ServiceOptions,
 ) {
+	s.registerConnectPrefix(path)
+	s.registerDrain(opt.drain)
+
 	s.Mux.Handle(path, HTTPErrorHandlerFunc(func(
 		w http.ResponseWriter, r *http.Request,
 	) error {
@@ -388,13 +502,28 @@ func (s *APIServer) ListenAndServe(ctx context.Context) error {
 	}
 
 	// Outermost, so that everything in the chain sees a bounded body.
-	handler = MaxBodyBytesMiddleware(s.maxBodyBytes, handler)
+	handler = maxBodyBytesMiddleware(
+		s.maxBodyBytes, s.isConnectPath, handler)
 
 	var loggingHandler http.HandlerFunc = func(w http.ResponseWriter, r *http.Request) {
 		ctx := WithLogMetadata(r.Context())
 
 		handler.ServeHTTP(w, r.WithContext(ctx))
 	}
+
+	// The drain is closed before the listeners are asked to shut down:
+	// http.Server.Shutdown waits for in-flight requests without cancelling
+	// their contexts, so a streaming handler that is not told about the
+	// shutdown holds it open until the timeout and then has its connection
+	// closed underneath it.
+	serveCtx, stopServing := context.WithCancel(context.WithoutCancel(ctx))
+
+	go func() {
+		<-ctx.Done()
+
+		s.startDraining()
+		stopServing()
+	}()
 
 	// Test servers are started from the get-go.
 	if s.testServer {
@@ -432,7 +561,8 @@ func (s *APIServer) ListenAndServe(ctx context.Context) error {
 			Protocols:         PlaintextProtocols(),
 		}
 
-		err := ListenAndServeContext(ctx, &server, 10*time.Second)
+		err := ListenAndServeContext(
+			serveCtx, &server, s.shutdownTimeout)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("API server error: %w", err)
 		}
@@ -457,8 +587,8 @@ func (s *APIServer) ListenAndServe(ctx context.Context) error {
 		}
 
 		err := ListenAndServeContext(
-			ctx, &server,
-			10*time.Second,
+			serveCtx, &server,
+			s.shutdownTimeout,
 			ListenAndServeTLS(s.logger, s.certFile, s.keyFile),
 		)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -509,6 +639,8 @@ func NewDefaultServiceOptions(
 		return ServiceOptions{}, fmt.Errorf("set up metrics: %w", err)
 	}
 
+	so.AddShutdownDrain()
+
 	return so, nil
 }
 
@@ -523,6 +655,42 @@ type ServiceOptions struct {
 	AuthMiddleware func(
 		w http.ResponseWriter, r *http.Request, next http.Handler,
 	) error
+
+	// MaxMessageBytes limits the size of a single message a Connect
+	// handler will read, through connect.WithReadMaxBytes. It defaults to
+	// DefaultMaxBodyBytes; a zero value is that default rather than
+	// connect-go's "any size", so that options composed by hand are
+	// bounded too, and a negative value asks for no limit.
+	//
+	// Per message is what a size limit should mean here: a unary call is
+	// one message, so MaxMessageBytes bounds exactly what the stream-level
+	// limit used to, while a client or bidirectional stream is bounded per
+	// message rather than dying once its cumulative traffic passes the
+	// limit. The APIServer exempts its Connect subtrees from the
+	// stream-level http.MaxBytesReader limit for that reason, so this is
+	// what bounds a Connect request there.
+	MaxMessageBytes int
+
+	// MaxSendMessageBytes limits the size of a single message a Connect
+	// handler may send, through connect.WithSendMaxBytes. It is off by
+	// default, and a service opts in by setting it.
+	//
+	// It is deliberately not defaulted the way MaxMessageBytes is. A read
+	// limit protects the service from its callers and replaces one that
+	// was already there; a send limit protects the caller from the
+	// service, and nothing has ever bounded what an elephant service may
+	// answer with — connect-go leaves it off, and the Twirp mount of a
+	// dual-stack service has no response limit at all. Defaulting it on
+	// would refuse responses the same service already serves, and refuse
+	// them unpredictably: connect-go checks the limit against the bytes
+	// that go on the wire, so a response the caller accepts compression
+	// for is measured compressed, and the identical call can pass for one
+	// caller and be refused for another.
+	//
+	// So set it where a bounded response is a property the service wants,
+	// knowing that its Twirp mount is not bound by it, and leave it alone
+	// otherwise.
+	MaxSendMessageBytes int
 
 	// JSONSkipDefaults configures JSON serialization to skip unpopulated or
 	// default values in JSON responses, which results in smaller responses
@@ -543,6 +711,71 @@ type ServiceOptions struct {
 	// every copy of the options value, whichever order the Set and Add
 	// methods were called in.
 	refusalObserver *refusalObserver
+
+	// drain is the shutdown drain the streaming handlers watch, installed
+	// by AddShutdownDrain. It is a pointer for the same reason, so that
+	// the APIServer a copy of the options is registered with closes the
+	// channel the interceptor is watching.
+	drain *drainSignal
+}
+
+// AddShutdownDrain installs the shutdown drain on the Connect mount: the
+// streaming handlers' contexts are cancelled when the drain starts, and a
+// stream that ends because of it is answered unavailable rather than being
+// severed mid-flight. See rpc.DrainInterceptor for what a handler has to do
+// for that to work.
+//
+// An APIServer starts the drain of every service registered with it when its
+// context is cancelled, before it shuts its listeners down. A service that
+// serves its RPCs from an http.Server of its own calls StartDraining itself,
+// before it shuts that server down.
+//
+// The interceptor is installed innermost, so that the logging and metrics
+// interceptors observe the code the stream actually ended with.
+func (so *ServiceOptions) AddShutdownDrain() {
+	if so.drain != nil {
+		return
+	}
+
+	so.drain = newDrainSignal()
+
+	so.Interceptors = append(so.Interceptors,
+		rpc.DrainInterceptor(so.drain.channel()))
+}
+
+// StartDraining tells the streaming handlers of the services these options
+// were applied to that the server is shutting down. It is idempotent, and a
+// no-op for options with no drain.
+func (so *ServiceOptions) StartDraining() {
+	so.drain.start()
+}
+
+// drainSignal is the shutdown drain, shared by every copy of a ServiceOptions
+// value and by the APIServer the options are registered with.
+type drainSignal struct {
+	once sync.Once
+	ch   chan struct{}
+}
+
+func newDrainSignal() *drainSignal {
+	return &drainSignal{ch: make(chan struct{})}
+}
+
+// channel is the channel the drain interceptor watches.
+func (d *drainSignal) channel() <-chan struct{} {
+	return d.ch
+}
+
+// start begins the drain. It is safe to call more than once, and on a nil
+// signal, since a service that composed its options by hand has none.
+func (d *drainSignal) start() {
+	if d == nil {
+		return
+	}
+
+	d.once.Do(func() {
+		close(d.ch)
+	})
 }
 
 // ServerOptions returns a ServerOptions function that configures the twirp
@@ -564,13 +797,48 @@ func (so *ServiceOptions) ServerOptions() twirp.ServerOption {
 // to the set service options. It is the Connect counterpart of ServerOptions,
 // and is passed to the generated New<Service>ServiceHandler constructor.
 func (so *ServiceOptions) HandlerOptions() []connect.HandlerOption {
-	if len(so.Interceptors) == 0 {
-		return nil
+	opts := []connect.HandlerOption{
+		connect.WithReadMaxBytes(readMessageLimit(so.MaxMessageBytes)),
+		connect.WithSendMaxBytes(sendMessageLimit(so.MaxSendMessageBytes)),
 	}
 
-	return []connect.HandlerOption{
-		connect.WithInterceptors(so.Interceptors...),
+	if len(so.Interceptors) > 0 {
+		opts = append(opts,
+			connect.WithInterceptors(so.Interceptors...))
 	}
+
+	return opts
+}
+
+// readMessageLimit turns ServiceOptions.MaxMessageBytes into the byte count
+// connect.WithReadMaxBytes takes, where zero means any size. An unset field is
+// the default limit rather than no limit, so that a Connect mount is bounded
+// even when the options were composed by hand, and a negative value is what
+// asks for connect-go's unlimited.
+func readMessageLimit(n int) int {
+	switch {
+	case n == 0:
+		return int(DefaultMaxBodyBytes)
+	case n < 0:
+		return 0
+	}
+
+	return n
+}
+
+// sendMessageLimit turns ServiceOptions.MaxSendMessageBytes into the byte
+// count connect.WithSendMaxBytes takes, where zero means any size.
+//
+// An unset field is no limit, which is the opposite of the read side and is
+// the point: bounding what a service may answer with is a new restriction on
+// responses that both connect-go and the Twirp mount serve unbounded today, so
+// it is opted into rather than defaulted on. See the field's documentation.
+func sendMessageLimit(n int) int {
+	if n <= 0 {
+		return 0
+	}
+
+	return n
 }
 
 func (so *ServiceOptions) AddLoggingHooks(

@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package elephantine.testservice.v1;
+
+option go_package = "github.com/ttab/elephantine/internal/testservice";
+
+// StreamService is the streaming fixture the rpc package's streaming tests are
+// run against, one method per stream type. It is Connect native: a streaming
+// method has no place in the plain interface a dual-stack service implements,
+// so protoc-gen-elephant-rpc and protoc-gen-twirp are not run for it.
+service StreamService {
+  // Emit sends the requested number of messages, and can be told to fail
+  // after the first, to stay open until its context is done, or to end when
+  // the caller's token expires.
+  rpc Emit(EmitRequest) returns (stream EmitResponse);
+  // Collect counts the messages and the bytes it is sent.
+  rpc Collect(stream CollectRequest) returns (CollectResponse);
+  // Exchange echoes every message it is sent.
+  rpc Exchange(stream ExchangeRequest) returns (stream ExchangeResponse);
+}
+
+message EmitRequest {
+  // count is the number of messages to send before the handler does anything
+  // else.
+  int32 count = 1;
+  // fail_code is the RPC code to fail with once the messages have been sent,
+  // which is what makes the handler answer with an error after the response
+  // status has been written.
+  string fail_code = 2;
+  // block keeps the stream open until the handler's context is done, which is
+  // the shape of a subscription.
+  bool block = 3;
+  // token_expiry makes the handler derive its context with
+  // rpc.ContextWithTokenExpiry, so that the stream ends when the caller's
+  // token expires.
+  bool token_expiry = 4;
+}
+
+message EmitResponse {
+  // number is the position of the message in the stream, counted from one.
+  int32 number = 1;
+}
+
+message CollectRequest {
+  bytes payload = 1;
+}
+
+message CollectResponse {
+  int64 messages = 1;
+  int64 bytes = 2;
+}
+
+message ExchangeRequest {
+  string message = 1;
+}
+
+message ExchangeResponse {
+  string message = 1;
+}

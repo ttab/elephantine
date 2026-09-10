@@ -223,8 +223,8 @@ const file_internal_testservice_testservice_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"!\n" +
 	"\vFailRequest\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\"\x0e\n" +
-	"\fFailResponse2\xbc\x01\n" +
-	"\x04Test\x12Y\n" +
+	"\fFailResponse2\xc3\x01\n" +
+	"\vTestService\x12Y\n" +
 	"\x04Echo\x12'.elephantine.testservice.v1.EchoRequest\x1a(.elephantine.testservice.v1.EchoResponse\x12Y\n" +
 	"\x04Fail\x12'.elephantine.testservice.v1.FailRequest\x1a(.elephantine.testservice.v1.FailResponseB2Z0github.com/ttab/elephantine/internal/testserviceb\x06proto3"
 
@@ -250,10 +250,10 @@ var file_internal_testservice_testservice_proto_goTypes = []any{
 }
 var file_internal_testservice_testservice_proto_depIdxs = []int32{
 	4, // 0: elephantine.testservice.v1.EchoResponse.log_metadata:type_name -> elephantine.testservice.v1.EchoResponse.LogMetadataEntry
-	0, // 1: elephantine.testservice.v1.Test.Echo:input_type -> elephantine.testservice.v1.EchoRequest
-	2, // 2: elephantine.testservice.v1.Test.Fail:input_type -> elephantine.testservice.v1.FailRequest
-	1, // 3: elephantine.testservice.v1.Test.Echo:output_type -> elephantine.testservice.v1.EchoResponse
-	3, // 4: elephantine.testservice.v1.Test.Fail:output_type -> elephantine.testservice.v1.FailResponse
+	0, // 1: elephantine.testservice.v1.TestService.Echo:input_type -> elephantine.testservice.v1.EchoRequest
+	2, // 2: elephantine.testservice.v1.TestService.Fail:input_type -> elephantine.testservice.v1.FailRequest
+	1, // 3: elephantine.testservice.v1.TestService.Echo:output_type -> elephantine.testservice.v1.EchoResponse
+	3, // 4: elephantine.testservice.v1.TestService.Fail:output_type -> elephantine.testservice.v1.FailResponse
 	3, // [3:5] is the sub-list for method output_type
 	1, // [1:3] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name

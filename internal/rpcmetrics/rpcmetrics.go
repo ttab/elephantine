@@ -38,23 +38,18 @@ const (
 // CodeOK is the code label value used for a response that carried no error.
 const CodeOK = "ok"
 
-// ProtocolResponsesHelp is the help text for rpc_protocol_responses_total. It
-// is exported so that the tests can compare the exposition format against it
-// rather than repeating it.
-const ProtocolResponsesHelp = "Number of RPC responses sent, by protocol, RPC" +
-	" code and calling client. Traffic on protocol=\"twirp\" is what still" +
-	" keeps a service's Twirp mount alive, so a method whose Twirp share has" +
-	" reached zero can have it removed, and client_id names the application" +
-	" that has to move before it can; the code label separates errors that" +
-	" rpc_responses_total reports under a single HTTP status, such as a lock" +
-	" conflict from a validation failure."
-
 // Metrics is the RPC server metric set.
 type Metrics struct {
-	// Requests counts received requests, before the handler runs.
+	// Requests counts received requests, before the handler runs. A
+	// streaming call is counted once, when the stream opens.
 	Requests *prometheus.CounterVec
-	// Duration observes the handler runtime.
+	// Duration observes the handler runtime of a unary call. Streams are
+	// observed in StreamDuration instead.
 	Duration *prometheus.HistogramVec
+	// StreamDuration observes the lifetime of a streaming call.
+	StreamDuration *prometheus.HistogramVec
+	// StreamsActive counts the streaming calls that are currently open.
+	StreamsActive *prometheus.GaugeVec
 	// Responses counts sent responses by HTTP status.
 	Responses *prometheus.CounterVec
 	// ProtocolResponses counts sent responses by protocol, RPC code and
@@ -91,6 +86,38 @@ func New(reg prometheus.Registerer) (*Metrics, error) {
 		return nil, err
 	}
 
+	// The buckets run out to about four and a half hours, since a stream's
+	// duration is the lifetime of a subscription and not a latency.
+	streamDuration, err := registerOrReuse(reg, prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "rpc_stream_duration_seconds",
+			Help: "Lifetime of a streaming RPC, observed when the stream" +
+				" ends. Streams are kept out of rpc_duration_seconds," +
+				" whose top bucket is about thirty seconds, so that a" +
+				" long subscription does not drag every latency" +
+				" quantile with it into +Inf.",
+			Buckets: prometheus.ExponentialBuckets(0.5, 2, 16),
+		},
+		[]string{LabelService, LabelMethod, LabelCustomer},
+	))
+	if err != nil {
+		return nil, err
+	}
+
+	streamsActive, err := registerOrReuse(reg, prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "rpc_streams_active",
+			Help: "Number of streaming RPCs currently open. A count that" +
+				" does not fall back after a deploy is a subscription" +
+				" leak, and one that does not rise again is a client" +
+				" that has stopped reconnecting.",
+		},
+		[]string{LabelService, LabelMethod},
+	))
+	if err != nil {
+		return nil, err
+	}
+
 	responses, err := registerOrReuse(reg, prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "rpc_responses_total",
@@ -105,7 +132,15 @@ func New(reg prometheus.Registerer) (*Metrics, error) {
 	protocolResponses, err := registerOrReuse(reg, prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "rpc_protocol_responses_total",
-			Help: ProtocolResponsesHelp,
+			Help: "Number of RPC responses sent, by protocol, RPC code" +
+				" and calling client. Traffic on protocol=\"twirp\" is" +
+				" what still keeps a service's Twirp mount alive, so a" +
+				" method whose Twirp share has reached zero can have it" +
+				" removed, and client_id names the application that has" +
+				" to move before it can; the code label separates" +
+				" errors that rpc_responses_total reports under a" +
+				" single HTTP status, such as a lock conflict from a" +
+				" validation failure.",
 		},
 		[]string{
 			LabelService, LabelMethod, LabelProtocol, LabelCode,
@@ -118,6 +153,8 @@ func New(reg prometheus.Registerer) (*Metrics, error) {
 
 	m.Requests = requests
 	m.Duration = duration
+	m.StreamDuration = streamDuration
+	m.StreamsActive = streamsActive
 	m.Responses = responses
 	m.ProtocolResponses = protocolResponses
 

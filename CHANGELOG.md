@@ -4,6 +4,96 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
+## [v0.30.0] - Unreleased
+
+**Behaviour change (request body limits on Connect mounts):** `APIServer` no
+longer wraps the request body of a Connect subtree in an `http.MaxBytesReader`.
+That reader counts the bytes read over the life of the request, and a client or
+bidirectional stream's request body *is* the stream, so such a stream died once
+its cumulative traffic passed `DefaultMaxBodyBytes` — 8 MiB once, not per
+message. Connect requests are bounded per message instead, by the new
+`ServiceOptions.MaxMessageBytes`, which `HandlerOptions()` emits as
+`connect.WithReadMaxBytes`. It defaults to `DefaultMaxBodyBytes` and a unary
+call is one message, so a unary request is bounded exactly as it was; a zero
+value is that default rather than connect-go's "any size", and a negative value
+asks for no limit. A service that raised `APIServerMaxBodyBytes` for the sake
+of a large Connect request should set `MaxMessageBytes` to the same number,
+since that limit is now what bounds it. The exemption's residual cost is that a
+Connect request body is no longer bounded in total: connect-go reads past an
+over-sized unary message to `io.Discard` so the connection can be reused, and
+with no cumulative limit a caller sending an endless chunked body holds a
+connection and a goroutine rather than being cut off at 8 MiB. Nothing grows
+without bound, and a client stream can hold a connection open by design, so a
+cumulative limit is not the answer — bounding it is the ingress's job.
+**Every non-Connect mount is unchanged**: the Twirp services and anything a
+service hands to `server.Mux` itself keep the stream-level limit, and the cheap
+413 for a request that declares an oversized `Content-Length` stays on every
+path. Responses are not bounded by any of this: the new
+`ServiceOptions.MaxSendMessageBytes` emits `connect.WithSendMaxBytes` for a
+service that wants a bound on what it answers with, and is off unless set,
+since nothing has bounded an elephant service's responses before and the Twirp
+mount of the same service still does not.
+
+**Behaviour change (RPC metrics):** `rpc_duration_seconds` is unary only. A
+stream's "duration" is the lifetime of a subscription, and the histogram's top
+bucket is about thirty seconds, so a single long-lived stream landed in `+Inf`
+and dragged every quantile computed over the service with it. Streams are
+observed in the new `rpc_stream_duration_seconds{service,method,customer}`,
+whose buckets run out to about four and a half hours, and counted while they
+are open in the new gauge `rpc_streams_active{service,method}` — the series to
+alert on, since a subscription count that does not fall after a deploy is a
+leak. Streams are still counted in `rpc_requests_total` when they open and in
+`rpc_responses_total` and `rpc_protocol_responses_total` when they close. No
+existing series was renamed or relabelled, and no service serves a stream
+today, so nothing changes in the values a dashboard is reading now. There is
+deliberately no per-message counter.
+
+Changes:
+
+- `rpc.DrainInterceptor(drain <-chan struct{})` ends streaming handlers when
+  the server starts shutting down: it derives their context with a cancellation
+  cause of `rpc.ErrDraining` and answers the stream `unavailable`, so a client
+  reconnects rather than seeing a truncated stream with no code.
+  `http.Server.Shutdown` waits for in-flight requests without cancelling their
+  contexts, so before this a streaming handler learned nothing about a
+  shutdown, held it open until the timeout and then had its connection closed
+  underneath it. Unary handlers pass through untouched.
+  `NewDefaultServiceOptions` installs the interceptor, and an `APIServer`
+  starts the drain of every service registered with it when its context is
+  cancelled, before it calls `Shutdown`. A service that composes its options by
+  hand calls `ServiceOptions.AddShutdownDrain()`, and one that serves its RPCs
+  from an `http.Server` of its own calls `ServiceOptions.StartDraining()`
+  before it shuts that server down. A handler still has to select on
+  `ctx.Done()` between sends for any of it to do anything.
+- `rpc.ContextWithTokenExpiry(ctx)` derives a context that is cancelled when
+  the caller's token expires, with a cause of `rpc.ErrTokenExpired`, which the
+  drain interceptor turns into `unauthenticated` so the client reconnects with
+  a fresh token. It is a helper a streaming handler calls, not a default an
+  interceptor imposes: whether a stream may outlive the token that opened it is
+  that stream's decision. There is no grace period, and the guarantee is that
+  exposure is bounded by the token lifetime — revocation before expiry is not
+  covered.
+- `APIServerShutdownTimeout(d)` sets how long the server waits for in-flight
+  requests, replacing the ten seconds that were hard-coded inside
+  `ListenAndServe`. The default is unchanged and is exported as
+  `DefaultShutdownTimeout`; a service whose streams flush before they close
+  needs more than it.
+- The request-scoped log metadata map is guarded by a mutex, and
+  `GetLogMetadata` returns a copy. A streaming handler that runs a producer
+  goroutine alongside the one writing to the stream is the normal shape, and
+  two of them calling `SetLogMetadata` was a concurrent map write — a
+  process-killing panic rather than a race that logs something odd.
+- The repository has a `buf.yaml` with the `STANDARD` lint rules, with
+  `PACKAGE_DIRECTORY_MATCH` and `PACKAGE_VERSION_SUFFIX` exempted for
+  `rpc/errormeta.proto`, which can never be renamed: `elephantine.rpc.ErrorMeta`
+  is the error-detail type name on the wire in every Connect error body in the
+  fleet. The internal fixture service was renamed from `Test` to `TestService`
+  to satisfy `SERVICE_SUFFIX`; it is in `internal/`, so no consumer sees it.
+- `docs/connect.md` now covers the native Connect shape and streaming: what
+  reaches a caller through the ingress, how to write a streaming handler, and
+  the size, shutdown and metric behaviour above. `docs/metrics.md` documents
+  the two new series.
+
 ## [v0.29.1] - 2026-09-07
 
 **Test flake fix (`test.NewLogHandler`):** a package whose tests log through the
@@ -239,8 +329,7 @@ Changes:
 - Documentation for driving the migration lives here: `docs/connect.md` is the
   fleet reference for serving, calling, testing and generating Connect,
   `docs/migration-service.md` the per-service playbook and
-  `docs/migration-client.md` the per-client one. The master plan and the
-  record of decisions stay in `CONNECT_MIGRATION.md` in elephant-repository.
+  `docs/migration-client.md` the per-client one.
 - `test.IsRPCError(t, err, code)` accepts either error type, and
   `test.ErrorParity(t, twirpErr, connectErr)` asserts that the same call
   answered the two stacks with the same code, message and metadata, which is

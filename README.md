@@ -45,6 +45,7 @@ Shared functionality for Elephant systems. It's most likely not something anyone
 ### `cmd/protoc-gen-elephant-rpc` — Connect adapters
 
 - A protobuf compiler plugin that generates the adapters that let a service keep the plain interface Twirp gives it while serving Connect, and the interface itself once Twirp generation stops. See [Generating the RPC adapters](#generating-the-rpc-adapters)
+- Only unary RPCs. A native Connect service skips the adapters and implements connect-go's own handler interface, which is what lets it declare streaming methods — see [docs/connect.md](docs/connect.md)
 
 ## Generating the RPC adapters
 

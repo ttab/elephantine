@@ -27,14 +27,14 @@ import url "net/url"
 // See https://twitchtv.github.io/twirp/docs/version_matrix.html
 const _ = twirp.TwirpPackageMinVersion_8_1_0
 
-// ==============
-// Test Interface
-// ==============
+// =====================
+// TestService Interface
+// =====================
 
-// Test is the fixture service the dual-stack tests in the rpc package are run
-// against. It is generated with the same plugins and versions the fleet
-// generates its services with.
-type Test interface {
+// TestService is the fixture service the dual-stack tests in the rpc package
+// are run against. It is generated with the same plugins and versions the
+// fleet generates its services with.
+type TestService interface {
 	// Echo returns the message it was given, together with what the service
 	// could see of the caller.
 	Echo(context.Context, *EchoRequest) (*EchoResponse, error)
@@ -43,20 +43,20 @@ type Test interface {
 	Fail(context.Context, *FailRequest) (*FailResponse, error)
 }
 
-// ====================
-// Test Protobuf Client
-// ====================
+// ===========================
+// TestService Protobuf Client
+// ===========================
 
-type testProtobufClient struct {
+type testServiceProtobufClient struct {
 	client      HTTPClient
 	urls        [2]string
 	interceptor twirp.Interceptor
 	opts        twirp.ClientOptions
 }
 
-// NewTestProtobufClient creates a Protobuf client that implements the Test interface.
+// NewTestServiceProtobufClient creates a Protobuf client that implements the TestService interface.
 // It communicates using Protobuf and can be configured with a custom HTTPClient.
-func NewTestProtobufClient(baseURL string, client HTTPClient, opts ...twirp.ClientOption) Test {
+func NewTestServiceProtobufClient(baseURL string, client HTTPClient, opts ...twirp.ClientOption) TestService {
 	if c, ok := client.(*http.Client); ok {
 		client = withoutRedirects(c)
 	}
@@ -76,13 +76,13 @@ func NewTestProtobufClient(baseURL string, client HTTPClient, opts ...twirp.Clie
 
 	// Build method URLs: <baseURL>[<prefix>]/<package>.<Service>/<Method>
 	serviceURL := sanitizeBaseURL(baseURL)
-	serviceURL += baseServicePath(pathPrefix, "elephantine.testservice.v1", "Test")
+	serviceURL += baseServicePath(pathPrefix, "elephantine.testservice.v1", "TestService")
 	urls := [2]string{
 		serviceURL + "Echo",
 		serviceURL + "Fail",
 	}
 
-	return &testProtobufClient{
+	return &testServiceProtobufClient{
 		client:      client,
 		urls:        urls,
 		interceptor: twirp.ChainInterceptors(clientOpts.Interceptors...),
@@ -90,9 +90,9 @@ func NewTestProtobufClient(baseURL string, client HTTPClient, opts ...twirp.Clie
 	}
 }
 
-func (c *testProtobufClient) Echo(ctx context.Context, in *EchoRequest) (*EchoResponse, error) {
+func (c *testServiceProtobufClient) Echo(ctx context.Context, in *EchoRequest) (*EchoResponse, error) {
 	ctx = ctxsetters.WithPackageName(ctx, "elephantine.testservice.v1")
-	ctx = ctxsetters.WithServiceName(ctx, "Test")
+	ctx = ctxsetters.WithServiceName(ctx, "TestService")
 	ctx = ctxsetters.WithMethodName(ctx, "Echo")
 	caller := c.callEcho
 	if c.interceptor != nil {
@@ -119,7 +119,7 @@ func (c *testProtobufClient) Echo(ctx context.Context, in *EchoRequest) (*EchoRe
 	return caller(ctx, in)
 }
 
-func (c *testProtobufClient) callEcho(ctx context.Context, in *EchoRequest) (*EchoResponse, error) {
+func (c *testServiceProtobufClient) callEcho(ctx context.Context, in *EchoRequest) (*EchoResponse, error) {
 	out := new(EchoResponse)
 	ctx, err := doProtobufRequest(ctx, c.client, c.opts.Hooks, c.urls[0], in, out)
 	if err != nil {
@@ -136,9 +136,9 @@ func (c *testProtobufClient) callEcho(ctx context.Context, in *EchoRequest) (*Ec
 	return out, nil
 }
 
-func (c *testProtobufClient) Fail(ctx context.Context, in *FailRequest) (*FailResponse, error) {
+func (c *testServiceProtobufClient) Fail(ctx context.Context, in *FailRequest) (*FailResponse, error) {
 	ctx = ctxsetters.WithPackageName(ctx, "elephantine.testservice.v1")
-	ctx = ctxsetters.WithServiceName(ctx, "Test")
+	ctx = ctxsetters.WithServiceName(ctx, "TestService")
 	ctx = ctxsetters.WithMethodName(ctx, "Fail")
 	caller := c.callFail
 	if c.interceptor != nil {
@@ -165,7 +165,7 @@ func (c *testProtobufClient) Fail(ctx context.Context, in *FailRequest) (*FailRe
 	return caller(ctx, in)
 }
 
-func (c *testProtobufClient) callFail(ctx context.Context, in *FailRequest) (*FailResponse, error) {
+func (c *testServiceProtobufClient) callFail(ctx context.Context, in *FailRequest) (*FailResponse, error) {
 	out := new(FailResponse)
 	ctx, err := doProtobufRequest(ctx, c.client, c.opts.Hooks, c.urls[1], in, out)
 	if err != nil {
@@ -182,20 +182,20 @@ func (c *testProtobufClient) callFail(ctx context.Context, in *FailRequest) (*Fa
 	return out, nil
 }
 
-// ================
-// Test JSON Client
-// ================
+// =======================
+// TestService JSON Client
+// =======================
 
-type testJSONClient struct {
+type testServiceJSONClient struct {
 	client      HTTPClient
 	urls        [2]string
 	interceptor twirp.Interceptor
 	opts        twirp.ClientOptions
 }
 
-// NewTestJSONClient creates a JSON client that implements the Test interface.
+// NewTestServiceJSONClient creates a JSON client that implements the TestService interface.
 // It communicates using JSON and can be configured with a custom HTTPClient.
-func NewTestJSONClient(baseURL string, client HTTPClient, opts ...twirp.ClientOption) Test {
+func NewTestServiceJSONClient(baseURL string, client HTTPClient, opts ...twirp.ClientOption) TestService {
 	if c, ok := client.(*http.Client); ok {
 		client = withoutRedirects(c)
 	}
@@ -215,13 +215,13 @@ func NewTestJSONClient(baseURL string, client HTTPClient, opts ...twirp.ClientOp
 
 	// Build method URLs: <baseURL>[<prefix>]/<package>.<Service>/<Method>
 	serviceURL := sanitizeBaseURL(baseURL)
-	serviceURL += baseServicePath(pathPrefix, "elephantine.testservice.v1", "Test")
+	serviceURL += baseServicePath(pathPrefix, "elephantine.testservice.v1", "TestService")
 	urls := [2]string{
 		serviceURL + "Echo",
 		serviceURL + "Fail",
 	}
 
-	return &testJSONClient{
+	return &testServiceJSONClient{
 		client:      client,
 		urls:        urls,
 		interceptor: twirp.ChainInterceptors(clientOpts.Interceptors...),
@@ -229,9 +229,9 @@ func NewTestJSONClient(baseURL string, client HTTPClient, opts ...twirp.ClientOp
 	}
 }
 
-func (c *testJSONClient) Echo(ctx context.Context, in *EchoRequest) (*EchoResponse, error) {
+func (c *testServiceJSONClient) Echo(ctx context.Context, in *EchoRequest) (*EchoResponse, error) {
 	ctx = ctxsetters.WithPackageName(ctx, "elephantine.testservice.v1")
-	ctx = ctxsetters.WithServiceName(ctx, "Test")
+	ctx = ctxsetters.WithServiceName(ctx, "TestService")
 	ctx = ctxsetters.WithMethodName(ctx, "Echo")
 	caller := c.callEcho
 	if c.interceptor != nil {
@@ -258,7 +258,7 @@ func (c *testJSONClient) Echo(ctx context.Context, in *EchoRequest) (*EchoRespon
 	return caller(ctx, in)
 }
 
-func (c *testJSONClient) callEcho(ctx context.Context, in *EchoRequest) (*EchoResponse, error) {
+func (c *testServiceJSONClient) callEcho(ctx context.Context, in *EchoRequest) (*EchoResponse, error) {
 	out := new(EchoResponse)
 	ctx, err := doJSONRequest(ctx, c.client, c.opts.Hooks, c.urls[0], in, out)
 	if err != nil {
@@ -275,9 +275,9 @@ func (c *testJSONClient) callEcho(ctx context.Context, in *EchoRequest) (*EchoRe
 	return out, nil
 }
 
-func (c *testJSONClient) Fail(ctx context.Context, in *FailRequest) (*FailResponse, error) {
+func (c *testServiceJSONClient) Fail(ctx context.Context, in *FailRequest) (*FailResponse, error) {
 	ctx = ctxsetters.WithPackageName(ctx, "elephantine.testservice.v1")
-	ctx = ctxsetters.WithServiceName(ctx, "Test")
+	ctx = ctxsetters.WithServiceName(ctx, "TestService")
 	ctx = ctxsetters.WithMethodName(ctx, "Fail")
 	caller := c.callFail
 	if c.interceptor != nil {
@@ -304,7 +304,7 @@ func (c *testJSONClient) Fail(ctx context.Context, in *FailRequest) (*FailRespon
 	return caller(ctx, in)
 }
 
-func (c *testJSONClient) callFail(ctx context.Context, in *FailRequest) (*FailResponse, error) {
+func (c *testServiceJSONClient) callFail(ctx context.Context, in *FailRequest) (*FailResponse, error) {
 	out := new(FailResponse)
 	ctx, err := doJSONRequest(ctx, c.client, c.opts.Hooks, c.urls[1], in, out)
 	if err != nil {
@@ -321,12 +321,12 @@ func (c *testJSONClient) callFail(ctx context.Context, in *FailRequest) (*FailRe
 	return out, nil
 }
 
-// ===================
-// Test Server Handler
-// ===================
+// ==========================
+// TestService Server Handler
+// ==========================
 
-type testServer struct {
-	Test
+type testServiceServer struct {
+	TestService
 	interceptor      twirp.Interceptor
 	hooks            *twirp.ServerHooks
 	pathPrefix       string // prefix for routing
@@ -334,10 +334,10 @@ type testServer struct {
 	jsonCamelCase    bool   // JSON fields are serialized as lowerCamelCase rather than keeping the original proto names
 }
 
-// NewTestServer builds a TwirpServer that can be used as an http.Handler to handle
+// NewTestServiceServer builds a TwirpServer that can be used as an http.Handler to handle
 // HTTP requests that are routed to the right method in the provided svc implementation.
 // The opts are twirp.ServerOption modifiers, for example twirp.WithServerHooks(hooks).
-func NewTestServer(svc Test, opts ...interface{}) TwirpServer {
+func NewTestServiceServer(svc TestService, opts ...interface{}) TwirpServer {
 	serverOpts := newServerOpts(opts)
 
 	// Using ReadOpt allows backwards and forwards compatibility with new options in the future
@@ -350,8 +350,8 @@ func NewTestServer(svc Test, opts ...interface{}) TwirpServer {
 		pathPrefix = "/twirp" // default prefix
 	}
 
-	return &testServer{
-		Test:             svc,
+	return &testServiceServer{
+		TestService:      svc,
 		hooks:            serverOpts.Hooks,
 		interceptor:      twirp.ChainInterceptors(serverOpts.Interceptors...),
 		pathPrefix:       pathPrefix,
@@ -362,12 +362,12 @@ func NewTestServer(svc Test, opts ...interface{}) TwirpServer {
 
 // writeError writes an HTTP response with a valid Twirp error format, and triggers hooks.
 // If err is not a twirp.Error, it will get wrapped with twirp.InternalErrorWith(err)
-func (s *testServer) writeError(ctx context.Context, resp http.ResponseWriter, err error) {
+func (s *testServiceServer) writeError(ctx context.Context, resp http.ResponseWriter, err error) {
 	writeError(ctx, resp, err, s.hooks)
 }
 
 // handleRequestBodyError is used to handle error when the twirp server cannot read request
-func (s *testServer) handleRequestBodyError(ctx context.Context, resp http.ResponseWriter, msg string, err error) {
+func (s *testServiceServer) handleRequestBodyError(ctx context.Context, resp http.ResponseWriter, msg string, err error) {
 	if context.Canceled == ctx.Err() {
 		s.writeError(ctx, resp, twirp.NewError(twirp.Canceled, "failed to read request: context canceled"))
 		return
@@ -379,16 +379,16 @@ func (s *testServer) handleRequestBodyError(ctx context.Context, resp http.Respo
 	s.writeError(ctx, resp, twirp.WrapError(malformedRequestError(msg), err))
 }
 
-// TestPathPrefix is a convenience constant that may identify URL paths.
+// TestServicePathPrefix is a convenience constant that may identify URL paths.
 // Should be used with caution, it only matches routes generated by Twirp Go clients,
 // with the default "/twirp" prefix and default CamelCase service and method names.
 // More info: https://twitchtv.github.io/twirp/docs/routing.html
-const TestPathPrefix = "/twirp/elephantine.testservice.v1.Test/"
+const TestServicePathPrefix = "/twirp/elephantine.testservice.v1.TestService/"
 
-func (s *testServer) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
+func (s *testServiceServer) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	ctx = ctxsetters.WithPackageName(ctx, "elephantine.testservice.v1")
-	ctx = ctxsetters.WithServiceName(ctx, "Test")
+	ctx = ctxsetters.WithServiceName(ctx, "TestService")
 	ctx = ctxsetters.WithResponseWriter(ctx, resp)
 
 	var err error
@@ -406,7 +406,7 @@ func (s *testServer) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 
 	// Verify path format: [<prefix>]/<package>.<Service>/<Method>
 	prefix, pkgService, method := parseTwirpPath(req.URL.Path)
-	if pkgService != "elephantine.testservice.v1.Test" {
+	if pkgService != "elephantine.testservice.v1.TestService" {
 		msg := fmt.Sprintf("no handler for path %q", req.URL.Path)
 		s.writeError(ctx, resp, badRouteError(msg, req.Method, req.URL.Path))
 		return
@@ -431,7 +431,7 @@ func (s *testServer) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (s *testServer) serveEcho(ctx context.Context, resp http.ResponseWriter, req *http.Request) {
+func (s *testServiceServer) serveEcho(ctx context.Context, resp http.ResponseWriter, req *http.Request) {
 	header := req.Header.Get("Content-Type")
 	i := strings.Index(header, ";")
 	if i == -1 {
@@ -449,7 +449,7 @@ func (s *testServer) serveEcho(ctx context.Context, resp http.ResponseWriter, re
 	}
 }
 
-func (s *testServer) serveEchoJSON(ctx context.Context, resp http.ResponseWriter, req *http.Request) {
+func (s *testServiceServer) serveEchoJSON(ctx context.Context, resp http.ResponseWriter, req *http.Request) {
 	var err error
 	ctx = ctxsetters.WithMethodName(ctx, "Echo")
 	ctx, err = callRequestRouted(ctx, s.hooks)
@@ -471,7 +471,7 @@ func (s *testServer) serveEchoJSON(ctx context.Context, resp http.ResponseWriter
 		return
 	}
 
-	handler := s.Test.Echo
+	handler := s.TestService.Echo
 	if s.interceptor != nil {
 		handler = func(ctx context.Context, req *EchoRequest) (*EchoResponse, error) {
 			resp, err := s.interceptor(
@@ -480,7 +480,7 @@ func (s *testServer) serveEchoJSON(ctx context.Context, resp http.ResponseWriter
 					if !ok {
 						return nil, twirp.InternalError("failed type assertion req.(*EchoRequest) when calling interceptor")
 					}
-					return s.Test.Echo(ctx, typedReq)
+					return s.TestService.Echo(ctx, typedReq)
 				},
 			)(ctx, req)
 			if resp != nil {
@@ -532,7 +532,7 @@ func (s *testServer) serveEchoJSON(ctx context.Context, resp http.ResponseWriter
 	callResponseSent(ctx, s.hooks)
 }
 
-func (s *testServer) serveEchoProtobuf(ctx context.Context, resp http.ResponseWriter, req *http.Request) {
+func (s *testServiceServer) serveEchoProtobuf(ctx context.Context, resp http.ResponseWriter, req *http.Request) {
 	var err error
 	ctx = ctxsetters.WithMethodName(ctx, "Echo")
 	ctx, err = callRequestRouted(ctx, s.hooks)
@@ -552,7 +552,7 @@ func (s *testServer) serveEchoProtobuf(ctx context.Context, resp http.ResponseWr
 		return
 	}
 
-	handler := s.Test.Echo
+	handler := s.TestService.Echo
 	if s.interceptor != nil {
 		handler = func(ctx context.Context, req *EchoRequest) (*EchoResponse, error) {
 			resp, err := s.interceptor(
@@ -561,7 +561,7 @@ func (s *testServer) serveEchoProtobuf(ctx context.Context, resp http.ResponseWr
 					if !ok {
 						return nil, twirp.InternalError("failed type assertion req.(*EchoRequest) when calling interceptor")
 					}
-					return s.Test.Echo(ctx, typedReq)
+					return s.TestService.Echo(ctx, typedReq)
 				},
 			)(ctx, req)
 			if resp != nil {
@@ -611,7 +611,7 @@ func (s *testServer) serveEchoProtobuf(ctx context.Context, resp http.ResponseWr
 	callResponseSent(ctx, s.hooks)
 }
 
-func (s *testServer) serveFail(ctx context.Context, resp http.ResponseWriter, req *http.Request) {
+func (s *testServiceServer) serveFail(ctx context.Context, resp http.ResponseWriter, req *http.Request) {
 	header := req.Header.Get("Content-Type")
 	i := strings.Index(header, ";")
 	if i == -1 {
@@ -629,7 +629,7 @@ func (s *testServer) serveFail(ctx context.Context, resp http.ResponseWriter, re
 	}
 }
 
-func (s *testServer) serveFailJSON(ctx context.Context, resp http.ResponseWriter, req *http.Request) {
+func (s *testServiceServer) serveFailJSON(ctx context.Context, resp http.ResponseWriter, req *http.Request) {
 	var err error
 	ctx = ctxsetters.WithMethodName(ctx, "Fail")
 	ctx, err = callRequestRouted(ctx, s.hooks)
@@ -651,7 +651,7 @@ func (s *testServer) serveFailJSON(ctx context.Context, resp http.ResponseWriter
 		return
 	}
 
-	handler := s.Test.Fail
+	handler := s.TestService.Fail
 	if s.interceptor != nil {
 		handler = func(ctx context.Context, req *FailRequest) (*FailResponse, error) {
 			resp, err := s.interceptor(
@@ -660,7 +660,7 @@ func (s *testServer) serveFailJSON(ctx context.Context, resp http.ResponseWriter
 					if !ok {
 						return nil, twirp.InternalError("failed type assertion req.(*FailRequest) when calling interceptor")
 					}
-					return s.Test.Fail(ctx, typedReq)
+					return s.TestService.Fail(ctx, typedReq)
 				},
 			)(ctx, req)
 			if resp != nil {
@@ -712,7 +712,7 @@ func (s *testServer) serveFailJSON(ctx context.Context, resp http.ResponseWriter
 	callResponseSent(ctx, s.hooks)
 }
 
-func (s *testServer) serveFailProtobuf(ctx context.Context, resp http.ResponseWriter, req *http.Request) {
+func (s *testServiceServer) serveFailProtobuf(ctx context.Context, resp http.ResponseWriter, req *http.Request) {
 	var err error
 	ctx = ctxsetters.WithMethodName(ctx, "Fail")
 	ctx, err = callRequestRouted(ctx, s.hooks)
@@ -732,7 +732,7 @@ func (s *testServer) serveFailProtobuf(ctx context.Context, resp http.ResponseWr
 		return
 	}
 
-	handler := s.Test.Fail
+	handler := s.TestService.Fail
 	if s.interceptor != nil {
 		handler = func(ctx context.Context, req *FailRequest) (*FailResponse, error) {
 			resp, err := s.interceptor(
@@ -741,7 +741,7 @@ func (s *testServer) serveFailProtobuf(ctx context.Context, resp http.ResponseWr
 					if !ok {
 						return nil, twirp.InternalError("failed type assertion req.(*FailRequest) when calling interceptor")
 					}
-					return s.Test.Fail(ctx, typedReq)
+					return s.TestService.Fail(ctx, typedReq)
 				},
 			)(ctx, req)
 			if resp != nil {
@@ -791,19 +791,19 @@ func (s *testServer) serveFailProtobuf(ctx context.Context, resp http.ResponseWr
 	callResponseSent(ctx, s.hooks)
 }
 
-func (s *testServer) ServiceDescriptor() ([]byte, int) {
+func (s *testServiceServer) ServiceDescriptor() ([]byte, int) {
 	return twirpFileDescriptor0, 0
 }
 
-func (s *testServer) ProtocGenTwirpVersion() string {
+func (s *testServiceServer) ProtocGenTwirpVersion() string {
 	return "v8.1.3"
 }
 
 // PathPrefix returns the base service path, in the form: "/<prefix>/<package>.<Service>/"
 // that is everything in a Twirp route except for the <Method>. This can be used for routing,
 // for example to identify the requests that are targeted to this service in a mux.
-func (s *testServer) PathPrefix() string {
-	return baseServicePath(s.pathPrefix, "elephantine.testservice.v1", "Test")
+func (s *testServiceServer) PathPrefix() string {
+	return baseServicePath(s.pathPrefix, "elephantine.testservice.v1", "TestService")
 }
 
 // =====
@@ -1372,25 +1372,25 @@ func callClientError(ctx context.Context, h *twirp.ClientHooks, err twirp.Error)
 }
 
 var twirpFileDescriptor0 = []byte{
-	// 309 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x92, 0xc1, 0x4a, 0xf3, 0x40,
-	0x10, 0xc7, 0x49, 0xdb, 0xef, 0x13, 0x27, 0x45, 0xca, 0xe2, 0x21, 0xe4, 0x54, 0x73, 0xb0, 0x39,
-	0x6d, 0xb4, 0x5e, 0xd4, 0x83, 0x07, 0xa1, 0x9e, 0xf4, 0x52, 0xbc, 0x28, 0x82, 0x6c, 0xd2, 0x21,
-	0x8d, 0x6e, 0x77, 0x6b, 0x76, 0x52, 0xe8, 0xbb, 0xf9, 0x30, 0x3e, 0x8a, 0x6c, 0x37, 0xc1, 0x20,
-	0xd6, 0x7a, 0x9b, 0xd9, 0xf9, 0xcf, 0x7f, 0x7e, 0xb3, 0x0c, 0x1c, 0x17, 0x8a, 0xb0, 0x54, 0x42,
-	0x26, 0x84, 0x86, 0x0c, 0x96, 0xab, 0x22, 0xc3, 0x76, 0xcc, 0x97, 0xa5, 0x26, 0xcd, 0x42, 0x94,
-	0xb8, 0x9c, 0x0b, 0x45, 0x85, 0x42, 0xde, 0x2e, 0xaf, 0x4e, 0xa3, 0x11, 0xf8, 0x93, 0x6c, 0xae,
-	0xa7, 0xf8, 0x56, 0xa1, 0x21, 0x16, 0xc0, 0xde, 0x02, 0x8d, 0x11, 0x39, 0x06, 0xde, 0xd0, 0x8b,
-	0xf7, 0xa7, 0x4d, 0x1a, 0x7d, 0x78, 0xd0, 0x77, 0x4a, 0xb3, 0xd4, 0xca, 0xe0, 0x76, 0xa9, 0xad,
-	0x98, 0x2a, 0x7d, 0xc1, 0x8c, 0x82, 0x8e, 0xab, 0xd4, 0x29, 0x7b, 0x82, 0xbe, 0xd4, 0xf9, 0xf3,
-	0x02, 0x49, 0xcc, 0x04, 0x89, 0xa0, 0x3b, 0xec, 0xc6, 0xfe, 0xf8, 0x82, 0x6f, 0x07, 0xe4, 0xed,
-	0x99, 0xfc, 0x56, 0xe7, 0x77, 0x75, 0xef, 0x44, 0x51, 0xb9, 0x9e, 0xfa, 0xf2, 0xeb, 0x25, 0xbc,
-	0x82, 0xc1, 0x77, 0x01, 0x1b, 0x40, 0xf7, 0x15, 0xd7, 0x35, 0xa1, 0x0d, 0xd9, 0x21, 0xfc, 0x5b,
-	0x09, 0x59, 0x61, 0xcd, 0xe6, 0x92, 0xcb, 0xce, 0xb9, 0x17, 0x1d, 0x81, 0x7f, 0x23, 0x0a, 0xd9,
-	0xfc, 0x05, 0x83, 0x5e, 0xa6, 0x67, 0xcd, 0x76, 0x9b, 0x38, 0x3a, 0x80, 0xbe, 0x93, 0x38, 0xa0,
-	0xf1, 0xbb, 0x07, 0xbd, 0x7b, 0x2b, 0x7e, 0x80, 0x9e, 0x25, 0x65, 0xa3, 0xdd, 0xbb, 0x6c, 0xdc,
-	0xc3, 0xf8, 0xaf, 0x4b, 0x5b, 0x6b, 0x3b, 0xf3, 0x77, 0xeb, 0x16, 0x78, 0x18, 0xef, 0x16, 0x3a,
-	0xeb, 0xeb, 0xf1, 0xe3, 0x49, 0x5e, 0xd0, 0xbc, 0x4a, 0x79, 0xa6, 0x17, 0x09, 0x91, 0x48, 0x93,
-	0x56, 0x6b, 0xf2, 0xd3, 0x7d, 0xa5, 0xff, 0x37, 0x47, 0x75, 0xf6, 0x39, 0x00, 0xbe, 0x7f, 0xd3,
-	0x7a, 0x7e, 0x02, 0x00, 0x00,
+	// 311 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x92, 0xc1, 0x4a, 0xc3, 0x40,
+	0x10, 0x86, 0x49, 0x5b, 0x15, 0x27, 0x45, 0xca, 0xe2, 0x21, 0xe4, 0x54, 0x73, 0xb0, 0x39, 0x6d,
+	0xb4, 0x5e, 0xd4, 0x83, 0x07, 0xa1, 0x9e, 0xf4, 0x52, 0xbd, 0x28, 0x82, 0x6c, 0xd2, 0x21, 0x8d,
+	0x6e, 0x77, 0x6b, 0x76, 0x52, 0xe8, 0xf3, 0xf9, 0x22, 0x3e, 0x8a, 0x24, 0x9b, 0x60, 0x10, 0x6b,
+	0xbd, 0xcd, 0xec, 0xfc, 0x33, 0xf3, 0xfd, 0xcb, 0xc0, 0x71, 0xa6, 0x08, 0x73, 0x25, 0x64, 0x44,
+	0x68, 0xc8, 0x60, 0xbe, 0xca, 0x12, 0x6c, 0xc7, 0x7c, 0x99, 0x6b, 0xd2, 0xcc, 0x47, 0x89, 0xcb,
+	0xb9, 0x50, 0x94, 0x29, 0xe4, 0xed, 0xf2, 0xea, 0x34, 0x18, 0x81, 0x3b, 0x49, 0xe6, 0x7a, 0x8a,
+	0xef, 0x05, 0x1a, 0x62, 0x1e, 0xec, 0x2d, 0xd0, 0x18, 0x91, 0xa2, 0xe7, 0x0c, 0x9d, 0x70, 0x7f,
+	0xda, 0xa4, 0xc1, 0xa7, 0x03, 0x7d, 0xab, 0x34, 0x4b, 0xad, 0x0c, 0x6e, 0x96, 0x96, 0x15, 0x53,
+	0xc4, 0xaf, 0x98, 0x90, 0xd7, 0xb1, 0x95, 0x3a, 0x65, 0xcf, 0xd0, 0x97, 0x3a, 0x7d, 0x59, 0x20,
+	0x89, 0x99, 0x20, 0xe1, 0x75, 0x87, 0xdd, 0xd0, 0x1d, 0x5f, 0xf0, 0xcd, 0x80, 0xbc, 0xbd, 0x93,
+	0xdf, 0xea, 0xf4, 0xae, 0xee, 0x9d, 0x28, 0xca, 0xd7, 0x53, 0x57, 0x7e, 0xbf, 0xf8, 0x57, 0x30,
+	0xf8, 0x29, 0x60, 0x03, 0xe8, 0xbe, 0xe1, 0xba, 0x26, 0x2c, 0x43, 0x76, 0x08, 0x3b, 0x2b, 0x21,
+	0x0b, 0xac, 0xd9, 0x6c, 0x72, 0xd9, 0x39, 0x77, 0x82, 0x23, 0x70, 0x6f, 0x44, 0x26, 0x9b, 0xbf,
+	0x60, 0xd0, 0x4b, 0xf4, 0xac, 0x71, 0x57, 0xc5, 0xc1, 0x01, 0xf4, 0xad, 0xc4, 0x02, 0x8d, 0x3f,
+	0x1c, 0x70, 0x1f, 0xd0, 0xd0, 0xbd, 0x05, 0x66, 0x8f, 0xd0, 0x2b, 0x81, 0xd9, 0x68, 0xbb, 0xa5,
+	0x6a, 0x89, 0x1f, 0xfe, 0xd7, 0x7b, 0x39, 0xba, 0x5c, 0xfd, 0xf7, 0xe8, 0x16, 0xbf, 0x1f, 0x6e,
+	0x17, 0xda, 0xd1, 0xd7, 0xe3, 0xa7, 0x93, 0x34, 0xa3, 0x79, 0x11, 0xf3, 0x44, 0x2f, 0x22, 0x22,
+	0x11, 0x47, 0xad, 0xd6, 0xe8, 0xb7, 0x33, 0x8b, 0x77, 0xab, 0xdb, 0x3a, 0xfb, 0x1a, 0x00, 0x3a,
+	0x97, 0x1e, 0x5c, 0x85, 0x02, 0x00, 0x00,
 }

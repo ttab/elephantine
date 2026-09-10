@@ -1,12 +1,16 @@
 # Connect in the elephant fleet
 
-How an elephant service serves, calls, tests and generates Connect, and how it
-keeps serving Twirp next to it for as long as it has Twirp callers. This is the
-working reference for engineers and agents. The decisions behind it are recorded
-in `CONNECT_MIGRATION.md` in the elephant-repository repository, which is the
-master plan; the step-by-step instructions for moving a service or a client are
-in [migration-service.md](migration-service.md) and
+How an elephant service serves, calls, tests and generates Connect — both a
+dual-stack service that still has Twirp callers and a native one that never
+had any — and what a streaming RPC needs that a unary one does not. This is
+the working reference for engineers and agents, and it is where the decisions
+below are settled. The step-by-step instructions for moving an existing service
+or client off Twirp are in [migration-service.md](migration-service.md) and
 [migration-client.md](migration-client.md).
+
+A service is one of two shapes, and the difference is confined to the handler
+signature. Everything else here — errors, scopes, authentication, logging,
+metrics, size limits, shutdown — is the same for both.
 
 ## The shape
 
@@ -35,6 +39,47 @@ through the `rpc` package on both stacks.
 Retiring Twirp from a service is therefore a deletion: the mount line, the
 interceptor and the Twirp test client. Nothing in the handlers changes.
 
+### A native service implements connect-go's own interface
+
+A service that will never serve Twirp does not need the plain interface, and
+paying for it costs it streaming RPCs — `protoc-gen-elephant-rpc` fails
+generation on a streaming method, because a stream has no place in a signature
+that returns one response. So a native service implements the handler interface
+`protoc-gen-connect-go` generates, and nothing of ours sits between it and
+connect-go:
+
+```go
+type CollaborationServiceHandler interface {
+	Snapshot(context.Context, *connect.Request[collabv1.SnapshotRequest]) (*connect.Response[collabv1.SnapshotResponse], error)
+	StreamSessionUpdates(context.Context, *connect.Request[collabv1.StreamSessionUpdatesRequest], *connect.ServerStream[collabv1.SessionUpdate]) error
+}
+```
+
+`New<Service>Handler` and `New<Service>Client` are connect-go's own
+constructors. There is no `service.elephant.go`, no `New<Service>ServiceHandler`
+and no plain interface in `service.rpc.go` — the `Service` infix that tells our
+adapters from connect-go's constructors has nothing left to distinguish.
+
+Three consequences worth naming rather than discovering:
+
+- **A client is not a drop-in.** `New<Service>Client` returns
+  `*connect.Client[Req, Res]`, so a caller writes
+  `client.Get(ctx, connect.NewRequest(req))` and reads `res.Msg`. That is the
+  vanilla shape, and it is what a caller who wants response headers or a stream
+  has to use anyway.
+- **Handlers see headers.** `req.Header()` is right there, which is convenient
+  and is also how a service ends up with a protocol-specific handler. The rule
+  above still stands: anything that has to be read on every request is HTTP
+  middleware that puts a value on the context.
+- **Twirp is not available later.** Adding a Twirp mount to a native service
+  means rewriting every handler signature, so the choice is made once, at
+  declaration time.
+
+The one part of `rpc` a native service never touches is the Twirp translation:
+`TwirpInterceptor`, `LegacyTwirpErrors`, `ToTwirp` and `FromTwirp`. Everything
+else in the package is the same for both shapes, and every interceptor in it
+covers streaming calls as well as unary ones.
+
 ## Paths, protocols and wire formats
 
 | | Twirp | Connect |
@@ -47,7 +92,7 @@ interceptor and the Twirp test client. Nothing in the handlers changes.
 | JSON defaults | omitted (`WithServerJSONSkipDefaults`) | omitted (protojson default) |
 
 The paths never overlap, so one server mounts both. Connect at the standard
-root, no prefix (decision 2 in the master plan): every Connect client and proxy
+root, no prefix, and that is not negotiable: every Connect client and proxy
 assumes it, and the generated `Procedure` constants say so. An ingress rule that
 routes on `/twirp/` needs a sibling rule for the unprefixed paths.
 
@@ -71,8 +116,8 @@ the generated types and are not affected at all. A raw-`fetch` caller that
 changes only the path prefix will read `undefined` for every multi-word field,
 which is the failure to look for.
 
-This is deliberate (decision 9 in the master plan): a service must **not**
-install a `UseProtoNames` codec to make Connect look like Twirp. Every Connect
+This is deliberate: a service must **not** install a `UseProtoNames` codec to
+make Connect look like Twirp. Every Connect
 runtime, every proxy that understands Connect and every piece of documentation
 assumes the standard encoding, and a service that deviates from it is a service
 whose clients cannot be generated from its `.proto` alone. The difference is
@@ -101,7 +146,7 @@ and the plaintext listener speaks HTTP/2 so that a gRPC client can reach it.
 **That reach ends at the cluster.** The fleet's ingress speaks HTTP/1.1 to its
 targets, and giving gRPC an externally reachable target group means a dedicated
 listener, host and health check per service, which was judged more work than the
-benefit is worth (decision 14 in the master plan). So:
+benefit is worth. So:
 
 - Inside the cluster, service to service, gRPC and gRPC-Web work and are a
   supported way to call an elephant service.
@@ -201,7 +246,7 @@ The plaintext listener serves HTTP/1.1 and HTTP/2 side by side (Go's
 without TLS inside the cluster. The two are told apart by the HTTP/2 connection
 preface, so Twirp, SSE and websocket callers are unaffected. It does not make
 gRPC reachable from outside: the ingress speaks HTTP/1.1 to its targets, and
-external gRPC access is deliberately not provided (decision 14). A service that
+external gRPC access is deliberately not provided. A service that
 mounts Connect on an `http.Server` of its own sets the same protocols with
 `Protocols: elephantine.PlaintextProtocols()`; without it gRPC cannot be spoken
 to that listener at all, and nothing says so — the connection is simply refused
@@ -229,6 +274,85 @@ handlerOpts := []connect.HandlerOption{connect.WithInterceptors(interceptors...)
 Interceptors apply outermost first. While `rpc.LegacyTwirpErrors()` is in the
 chain, keep it innermost so logging and metrics see the code the caller will be
 answered with.
+
+### Message size limits
+
+`ServiceOptions` carries the two per-message limits `HandlerOptions()` emits,
+and they are deliberately not symmetric:
+
+| | Default | connect-go option |
+|---|---|---|
+| `MaxMessageBytes` | `DefaultMaxBodyBytes` (8 MiB) | `WithReadMaxBytes` |
+| `MaxSendMessageBytes` | no limit | `WithSendMaxBytes` |
+
+**The read side replaces a limit that was already there.** `APIServer` caps
+request bodies with an `http.MaxBytesReader`, which counts the bytes read over
+the life of the request — and for a client or bidirectional stream the request
+body *is* the stream, so such a stream would die once its cumulative traffic
+passed the cap. So `RegisterConnect` records the subtree it mounts and the body
+middleware skips the reader there, and `MaxMessageBytes` bounds a Connect
+request per message instead. A unary call is one message, so a unary request is
+bounded exactly as it was. A zero field is the default rather than connect-go's
+"any size", so hand-composed options are bounded too; a negative value asks for
+no limit.
+
+Two things that do not change: the cheap `413` for a request that *declares* an
+oversized `Content-Length` still fires on every path, and **every non-Connect
+mount keeps the stream-level limit** — the Twirp services, and anything a
+service hands to `server.Mux` itself. That limit is what stops one caller
+pinning an unbounded allocation per in-flight request.
+
+The residual cost of the exemption is that a Connect request body is no longer
+bounded in total: connect-go reads past an over-sized unary message to
+`io.Discard` so the connection can be reused, so a caller sending an endless
+chunked body holds a connection and a goroutine rather than being cut off.
+Nothing grows without bound, and a client stream holds a connection open
+indefinitely by design, so a cumulative limit is not the answer — bounding an
+abusive stream is the ingress's job.
+
+**The send side is off unless a service sets it.** A read limit protects the
+service from its callers; a send limit protects the caller from the service,
+and nothing has ever bounded what an elephant service may answer with —
+connect-go leaves it off, and the Twirp mount of a dual-stack service has no
+response limit at all. Defaulting it on would refuse responses the same service
+already serves: a large document, a bulk get, an eventlog batch. Worse, it
+would refuse them unpredictably, because connect-go checks the limit against
+the bytes that go on the wire rather than the marshalled message. A response is
+measured *compressed* when the caller accepts compression, so the identical
+call passes for one caller and is refused for another depending on their
+`Accept-Encoding` and on how compressible that particular document is.
+
+So set `MaxSendMessageBytes` where a bounded response is a property the service
+wants, knowing its Twirp mount is not bound by it, and leave it alone
+otherwise.
+
+### Graceful shutdown and streams
+
+`http.Server.Shutdown` waits for in-flight requests and **does not cancel their
+contexts**. For a unary handler that is right. For a streaming one it means the
+handler learns nothing about the shutdown, holds `Shutdown` open until the
+timeout, and then has its connection closed underneath it — the client sees a
+truncated stream with no code and the handler's cleanup never runs.
+
+The drain reaches the handler as the thing it already watches, its context:
+
+- `rpc.DrainInterceptor(drain <-chan struct{})` wraps **streaming handlers
+  only**, deriving a context cancelled when `drain` closes with a cause of
+  `rpc.ErrDraining`, and answering `connect.CodeUnavailable` so the client is
+  told to reconnect rather than told it cancelled. It does that whichever of
+  `ctx.Err()` and `context.Cause(ctx)` the handler returns. Unary handlers pass
+  through untouched.
+- `NewDefaultServiceOptions` installs it, and `APIServer` closes the channel
+  when its context is done, *before* it calls `Shutdown`. Options composed by
+  hand get it from `ServiceOptions.AddShutdownDrain()`; a service serving its
+  RPCs from an `http.Server` of its own calls `ServiceOptions.StartDraining()`
+  itself before shutting that server down.
+- `APIServerShutdownTimeout` sets how long the server then waits, defaulting to
+  `DefaultShutdownTimeout` (ten seconds). A service whose streams flush before
+  they close needs more.
+
+None of it does anything unless the handler selects on `ctx.Done()` between
+sends, which is the ordinary requirement for a streaming handler.
 
 ### Errors in handlers
 
@@ -331,6 +455,19 @@ service playbook needs before a major release removes the Twirp mount. Filter
 on `code` for the error breakdown the status label cannot give. See
 [metrics.md](metrics.md#rpc-metrics).
 
+**A stream is not in `rpc_duration_seconds`.** A stream's "duration" is the
+lifetime of a subscription, and that histogram's top bucket is about thirty
+seconds, so a single long-lived stream would land in `+Inf` and drag every
+quantile computed over the service with it. `rpc_duration_seconds` is unary
+only; streams are observed in `rpc_stream_duration_seconds{service,method,customer}`,
+whose buckets run out to about four and a half hours, and counted while open in
+the gauge `rpc_streams_active{service,method}` — the series to alert on, since a
+subscription count that does not fall after a deploy is a leak. Streams are
+still counted in `rpc_requests_total` when they open and in
+`rpc_responses_total` and `rpc_protocol_responses_total` when they close: one
+request, one response, and the response's code is whatever ended the stream.
+There is deliberately no per-message counter.
+
 Two things the series do not cover, and one that changed:
 
 - **Framework-level failures on Connect are not counted.** connect-go answers a
@@ -359,6 +496,152 @@ default; a service that replaced `AllowedHeaders` outright adds them itself.
 Nothing is exposed with `Access-Control-Expose-Headers`, which is what a browser
 gRPC-Web client would need to read the trailers its errors arrive in — that is
 deliberate, since gRPC-Web is in-cluster only and a browser uses Connect.
+
+## Streaming
+
+Streaming is native-only: a dual-stack service cannot declare one, because both
+`protoc-gen-elephant-rpc` and `protoc-gen-twirp` fail generation on a streaming
+method. Everything elephantine gives a unary RPC — authentication, scopes,
+logging, metrics, the drain — covers a streaming one, because every interceptor
+in `rpc` implements `WrapStreamingHandler` and `WrapStreamingClient` as well as
+`WrapUnary`. Never write one with `connect.UnaryInterceptorFunc`: it passes
+streaming calls straight through, which for authentication means a stream
+running with no check.
+
+### What reaches where
+
+Two independent axes: what the library supports, which is all of it, and what a
+given caller can get to, which depends on how many hops speak HTTP/2.
+
+| | In-cluster | Through the ingress |
+|---|---|---|
+| Unary | yes | yes |
+| Server streaming | yes | yes |
+| Client streaming | yes | yes, from a non-browser caller |
+| Bidirectional | yes | no, `505` |
+
+The plaintext listener speaks unencrypted HTTP/2 (`PlaintextProtocols`), so
+every stream type works service to service. Through the ingress:
+
+- **Server streaming** is one request message and a chunked response and needs
+  nothing from HTTP/2. Its constraints are the proxy's: an idle stream is closed
+  by the ingress idle timeout, which a heartbeat message answers, and a proxy
+  that buffers responses defeats streaming entirely. Check that against a real
+  ingress before offering a streaming RPC to anyone outside.
+- **Client streaming** survives HTTP/1.1, because the Connect protocol is
+  half-duplex over it, but no browser can send one: `fetch` has no request
+  streaming outside Chromium-over-HTTP/2.
+- **Bidirectional** does not. connect-go answers a bidirectional call over
+  HTTP/1.1 with a bare `505 HTTP Version Not Supported` and closes the
+  connection. That happens inside connect-go, after the authentication
+  middleware and before any interceptor, so the refusal carries no error body,
+  is not logged and is not counted. A service that mounts a bidirectional RPC
+  before the ingress speaks HTTP/2 has to say so in its own documentation,
+  because nothing in the response will.
+
+### Writing a streaming handler
+
+```go
+func (s *Service) StreamSessionUpdates(
+	ctx context.Context,
+	req *connect.Request[collabv1.StreamSessionUpdatesRequest],
+	stream *connect.ServerStream[collabv1.SessionUpdate],
+) error {
+	// Authorize before the first send. Once a message has gone out the
+	// response status is written, and a permission_denied after that
+	// reaches the client with a 200 already on the wire.
+	_, err := rpc.RequireAnyScope(ctx, "collab_admin")
+	if err != nil {
+		return err
+	}
+
+	// Optional, and the method's decision: ends the stream when the
+	// caller's token expires, so a long subscription cannot outlive the
+	// authorization that opened it.
+	ctx, cancel := rpc.ContextWithTokenExpiry(ctx)
+	defer cancel()
+
+	for update := range updates {
+		// A deploy drain, a client disconnect, a Connect-Timeout-Ms and
+		// the token expiry all arrive here.
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		err := stream.Send(update)
+		if err != nil {
+			return rpc.Internalf("send the update: %w", err)
+		}
+	}
+
+	return nil
+}
+```
+
+**Authorization goes first**, before any send, as does every argument
+validation.
+
+**Token expiry is the method's decision, not a default.** Authentication is
+checked once, when the stream opens, so a stream that runs for an hour is
+authorized against a token that may have expired forty minutes ago. Whether
+that matters differs per stream — public session metadata and document content
+are not the same risk — so `rpc.ContextWithTokenExpiry(ctx)` is a helper a
+handler calls. It derives a context cancelled at the token's `exp` with a cause
+of `rpc.ErrTokenExpired`, which the drain interceptor turns into
+`connect.CodeUnauthenticated` so the client reconnects with a fresh token
+rather than reading a server fault. There is no grace period, and a caller with
+no expiry claim gets a context that is simply never cancelled for it. The
+guarantee is that exposure is bounded by the token lifetime; revocation before
+expiry is not covered.
+
+**Watch the context between sends.** Without it the drain, the deadline and the
+client's own disconnect all do nothing.
+
+**A bidirectional handler must not deadlock.** `connect.BidiStream` is one
+connection, so a handler that sends a full window before reading anything
+stalls against a client doing the same. It presents as a hung service.
+
+### An error after the first message is not a status
+
+Once a handler has sent a message the response status is written. A later error
+travels in the end-of-stream frame — the Connect protocol's trailing JSON
+envelope, or gRPC trailers — so it reaches the client's stream iterator rather
+than its error return, and the HTTP status says 200.
+
+- `rpc_responses_total` reports the status the error's code maps to rather than
+  the bytes on the wire, so the two disagree for such a stream.
+  `rpc_protocol_responses_total`'s `code` label is the one that tells the
+  truth, exactly as it is for gRPC.
+- A browser Connect client reads the end-of-stream error out of the response
+  body and needs no `Access-Control-Expose-Headers`, so the [CORS](#cors)
+  position is unchanged. This is the one place where Connect streaming is
+  meaningfully better than gRPC-Web for us.
+
+### Deadlines
+
+`Connect-Timeout-Ms` becomes the handler's context deadline and connect-go
+enforces it, so a client that sets one on a subscription is disconnected on
+schedule. That is correct and the client's business, but it is the first thing
+to check when a stream ends at a suspiciously round interval — the other being
+the ingress idle timeout.
+
+### Streaming clients
+
+Everything elephantine adds to a client keeps working: `rpc.PropagateHeaders()`
+implements `WrapStreamingClient`, and `rpc.IsCode` and `rpc.Meta` read the error
+out of a stream's end-of-stream frame the same way they read it out of a unary
+response.
+
+Two things a streaming client has to do that a unary one does not. Give the
+stream a context it can cancel and cancel it when it stops reading, since an
+abandoned stream stays open on the server until the connection dies. And expect
+`unavailable` at deploys and `unauthenticated` at token expiry, treating both
+as a reconnect — which needs a resume token, an eventlog position or a document
+version, in the request message. That is service design rather than library
+design, but the fleet has one shape for it already and a new streaming RPC
+should reuse the eventlog's.
 
 ## Calling
 
@@ -427,7 +710,21 @@ of type `elephantine.rpc.ErrorMeta`, and the Connect JSON encoding includes a
   stacks, so a change in either encoding is a visible diff.
 - The elephantine `rpc` package's own tests are the reference for asserting
   metric label parity across stacks (`testutil.GatherAndCompare` against a
-  fixture service mounted both ways).
+  fixture service mounted both ways). They compare the samples and not the help
+  text: a metric's help is documentation, and pinning it in a fixture only
+  means a rewording fails a test that is not about wording.
+- For a streaming RPC, elephantine's own `stream.proto` fixture is the pattern:
+  `StreamService` with one method per stream type — `Emit`, a server stream
+  that can be told to fail after the first message or to stay open until its
+  context is done; `Collect`, a client stream; and `Exchange`, a bidirectional
+  one. `rpc/stream_test.go` shows what is worth asserting: that a stream is
+  bounded per message and not per stream, that it lands in the stream series
+  and not the unary one, that a drain ends it with `unavailable`, that
+  `ContextWithTokenExpiry` ends it with `unauthenticated`, and that an error
+  after the first message reaches the client with its code and its metadata.
+- `NewTestAPIServer` serves unencrypted HTTP/2, so a bidirectional fixture is
+  testable against it without TLS — over a client that asks for HTTP/2, since
+  connect-go answers a bidirectional call over HTTP/1.1 with a bare `505`.
 
 ## Generating
 
@@ -437,8 +734,8 @@ that package. No docker, nothing installed, no `buf.gen.yaml` in the
 repository. Per service it writes `service.pb.go`,
 `<pkg>connect/service.connect.go` (connect-go), `<pkg>connect/service.elephant.go`
 (the adapters), `service.twirp.go` when `rpc.Twirp = true`, and
-`service.rpc.go` (the plain interface) when Twirp is off. Nothing else: the
-OpenAPI specifications are gone (decision 8).
+`service.rpc.go` (the plain interface) when Twirp is off. Nothing else — the
+OpenAPI specifications a service used to ship are not generated any more.
 
 The output is a function of the pins, not of the machine. Every generator runs
 with `GOTOOLCHAIN` set to the toolchain `rpc.GeneratorToolchain` names and with
@@ -472,17 +769,52 @@ The generated code imports only `connectrpc.com/connect`, `context`,
 keeps elephant-api free of elephantine's dependencies. The dependency runs the
 other way: services import both.
 
+### A native declaration
+
+**The layout says which shape a service is.** A declaration in the flat layout,
+`<proto root>/<app>/service.proto`, is a dual-stack service and generates the
+adapters and — while `rpc.Twirp` is set — the Twirp code. A declaration in the
+versioned layout is native, and generates `protoc-gen-go` and
+`protoc-gen-connect-go` output only: no adapters, no plain interface, no Twirp,
+and streaming methods allowed. `mage rpc:stub` only ever writes the versioned
+layout, and nothing new goes into the flat one.
+
+A native declaration is `elephant.<app>.v1` in
+`<proto root>/elephant/<app>/v1/service.proto`, and passes buf's `STANDARD`
+lint rules with no exemptions. The nesting is not decoration:
+`PACKAGE_DIRECTORY_MATCH` is checked against the buf module root, so the
+package's elements have to be the directories under it. Both the package name
+and the service name end up in the procedure path
+(`/elephant.collab.v1.CollaborationService/Snapshot`), so they are free to get
+right before the first caller and breaking afterwards.
+
+Existing declarations predate all of this and are grandfathered file by file in
+`buf.yaml` under `lint.ignore_only` — `buf lint --error-format=config-ignore-yaml`
+generates that block. The exemption list only ever shrinks; a new file gets the
+full rule set.
+
+This repository's own `buf.yaml` is the small case. `rpc/errormeta.proto` is
+exempt from `PACKAGE_DIRECTORY_MATCH` and `PACKAGE_VERSION_SUFFIX` permanently:
+`elephantine.rpc.ErrorMeta` is the error-detail type name on the wire in every
+error body in the fleet, so the package cannot move or gain a version suffix
+without breaking metadata for every Connect client at once.
+
 ## A new service
 
-A new service is Connect-only. There is no Twirp mount, no `rpc.Twirp`, and no
+A new service is native. There is no Twirp mount, no `rpc.Twirp`, and no
 `twitchtv/twirp` anywhere in the module:
 
-1. Declare the service in `rpc/<name>/service.proto` (`mage rpc:stub` scaffolds
-   one) and run `mage rpc:generate`. The plain interface comes out in
-   `service.rpc.go`, the adapters in `<pkg>connect/`.
-2. Implement the interface; return errors through `rpc`; check scopes with
-   `rpc.RequireAnyScope` in every method.
-3. Mount with `NewDefaultServiceOptions` and `RegisterConnect`, as above.
-4. Test with the Connect client adapter and `test.IsRPCError`.
+1. Declare the service as `elephant.<name>.v1` in
+   `rpc/elephant/<name>/v1/service.proto` (`mage rpc:stub` scaffolds one) and
+   run `mage rpc:generate`. The versioned layout is what makes it native, so
+   the output is `service.pb.go` and `<pkg>connect/service.connect.go` and
+   nothing else.
+2. Implement the `<Service>Handler` interface `protoc-gen-connect-go` generates.
+   Return errors through `rpc`, and check scopes with `rpc.RequireAnyScope` in
+   every method — including before the first send of a stream.
+3. Mount with `NewDefaultServiceOptions` and `RegisterConnect`, as above. That
+   is what installs the drain, so a streaming method ends cleanly at a deploy.
+4. Test with connect-go's generated client and `test.IsRPCError`.
 5. Document the paths as `/<pkg>.<Service>/<Method>` and the error body as
    Connect's; nothing about `/twirp/` belongs in a new service's documentation.
+   If it serves a bidirectional RPC, say that the RPC is in-cluster only.

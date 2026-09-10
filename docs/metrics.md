@@ -105,7 +105,9 @@ protocols reports one set of series whichever stack registers first.
 | Metric | Labels | What a change means |
 |---|---|---|
 | `rpc_requests_total` | `service`, `method`, `customer` | Requests that reached a handler. A drop for a method that normally sees steady traffic is a caller that has stopped calling, or an ingress that has stopped routing. A call refused by authentication is counted as a response and not as a request, on both stacks, so a gap between the two series is callers being turned away at the door. |
-| `rpc_duration_seconds` | `service`, `method`, `customer` | Handler runtime. A rising high percentile on one method is that method's dependency, not the service as a whole. |
+| `rpc_duration_seconds` | `service`, `method`, `customer` | Handler runtime of a **unary** call. A rising high percentile on one method is that method's dependency, not the service as a whole. |
+| `rpc_stream_duration_seconds` | `service`, `method`, `customer` | Lifetime of a streaming call, observed when the stream ends. The buckets run out to about four and a half hours, so a subscription that lives for an hour is readable rather than piled into `+Inf`. |
+| `rpc_streams_active` | `service`, `method` | Streaming calls currently open, incremented when a stream opens and decremented when it closes. This is the one an alert wants: a subscription count that does not fall after a deploy is a leak, and one that does not rise again is a client that has stopped reconnecting. |
 | `rpc_responses_total` | `service`, `method`, `status`, `customer` | Responses by HTTP status. Note that Connect answers `failed_precondition` with `400` where Twirp answered `412`, so a lock conflict is not visible as a status any more. |
 | `rpc_protocol_responses_total` | `service`, `method`, `protocol`, `code`, `client_id` | Responses by protocol, RPC code and calling client. `protocol="twirp"` going to zero for a method is what says its Twirp mount can be removed, and `client_id` names the applications that still have to move before it can; a rising `code` share is the error breakdown `rpc_responses_total` cannot give, since several codes share a status. |
 
@@ -116,8 +118,21 @@ stacks. `protocol` is one of `twirp`, `connect`, `grpc`, `grpc-web`, or
 claim of the caller's token, falling back to the authorized party (`azp`), and
 is empty for an anonymous caller and for a call authentication refused.
 
-`status` is the HTTP status actually sent, so `failed_precondition` is `412` on
-Twirp and `400` on Connect, and every gRPC and gRPC-Web response is `200`:
+**`rpc_duration_seconds` is unary only.** A stream's "duration" is the lifetime
+of a subscription, and the histogram's top bucket is about thirty seconds, so a
+single long-lived stream would land in `+Inf` and drag every quantile computed
+over the service with it — a p99 latency panel for a service that serves one
+subscription reads nothing. Streams are observed in
+`rpc_stream_duration_seconds` instead, and counted while they are open in
+`rpc_streams_active`. They are still counted in `rpc_requests_total` when the
+stream opens and in `rpc_responses_total` and `rpc_protocol_responses_total`
+when it closes, with the code of whatever ended the stream: one request, one
+response. There is deliberately no per-message counter — it is a real cost on a
+hot stream and nothing has asked for one.
+
+`status` is the HTTP status the response is answered with, so
+`failed_precondition` is `412` on Twirp and `400` on Connect, and every gRPC
+and gRPC-Web response is `200`:
 those protocols answer 200 and carry the code in the trailers, so their outcome
 is only readable in `rpc_protocol_responses_total`.
 
@@ -136,6 +151,13 @@ What the series do not cover:
   callers being turned away at the door. The middleware answers those requests
   itself and reports them itself; the `client_id` label is empty for them,
   since the caller was never identified.
+- **A stream that failed after its first message is a `200` in
+  `rpc_responses_total` on the wire but is reported under the status its code
+  maps to**, since the label is computed from the error the handler returned
+  and not from the bytes on the wire. The response status was written with the
+  first message, so nothing on the wire says the call failed;
+  `rpc_protocol_responses_total`'s `code` label is the one that names what
+  ended it.
 - **A handler error that wraps a context cancellation or a deadline without
   being a `*connect.Error`** is reported as `canceled` or `deadline_exceeded`,
   the code Connect answers it with, rather than `unknown`. Growth in

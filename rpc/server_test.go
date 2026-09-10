@@ -3,6 +3,8 @@ package rpc_test
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,8 +16,8 @@ import (
 	"connectrpc.com/connect"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/ttab/elephantine"
-	"github.com/ttab/elephantine/internal/rpcmetrics"
 	"github.com/ttab/elephantine/internal/testservice"
 	"github.com/ttab/elephantine/internal/testservice/testserviceconnect"
 	"github.com/ttab/elephantine/rpc"
@@ -97,25 +99,82 @@ func (s scopedImpl) Echo(
 }
 
 // stack is a dual-stack test server: one service implementation mounted on both
-// protocols behind one set of service options.
+// protocols behind one set of service options, with the streaming fixture
+// mounted on Connect next to it.
 type stack struct {
 	Addr     string
 	Registry *prometheus.Registry
 	Records  *recordingHandler
 	Token    string
+	Options  elephantine.ServiceOptions
 
 	key    *ecdsa.PrivateKey
 	client *http.Client
+}
+
+// stackConfig is what a stackOption configures.
+type stackConfig struct {
+	ctx              context.Context
+	metrics          []elephantine.TwirpMetricOptionFunc
+	server           []elephantine.APIServerOption
+	messageBytes     int
+	sendMessageBytes int
+}
+
+// stackOption configures the test stack.
+type stackOption func(c *stackConfig)
+
+// withStackContext runs the server on the context, so that a test can cancel
+// it and see what the shutdown does to a call that is in flight.
+func withStackContext(ctx context.Context) stackOption {
+	return func(c *stackConfig) {
+		c.ctx = ctx
+	}
+}
+
+// withMetricsOptions passes options on to AddMetricsHooks.
+func withMetricsOptions(opts ...elephantine.TwirpMetricOptionFunc) stackOption {
+	return func(c *stackConfig) {
+		c.metrics = append(c.metrics, opts...)
+	}
+}
+
+// withServerOptions passes options on to the API server.
+func withServerOptions(opts ...elephantine.APIServerOption) stackOption {
+	return func(c *stackConfig) {
+		c.server = append(c.server, opts...)
+	}
+}
+
+// withMessageBytes sets the per-message size limit of the Connect mount.
+func withMessageBytes(n int) stackOption {
+	return func(c *stackConfig) {
+		c.messageBytes = n
+	}
+}
+
+// withSendMessageBytes sets the per-message size limit of what the Connect
+// mount may send.
+func withSendMessageBytes(n int) stackOption {
+	return func(c *stackConfig) {
+		c.sendMessageBytes = n
+	}
 }
 
 // newStack starts an API server serving the implementation over both Twirp and
 // Connect, with the standard service options.
 func newStack(
 	t *testing.T,
-	impl testservice.Test, requireAuth elephantine.ServiceAuth,
-	opts ...elephantine.TwirpMetricOptionFunc,
+	impl testservice.TestService, requireAuth elephantine.ServiceAuth,
+	opts ...stackOption,
 ) *stack {
 	t.Helper()
+
+	conf := stackConfig{ctx: t.Context()}
+
+	for _, o := range opts {
+		o(&conf)
+	}
 
 	var (
 		records = &recordingHandler{}
@@ -128,28 +187,34 @@ func newStack(
 	)
 
 	so := elephantine.ServiceOptions{
-		JSONSkipDefaults: true,
+		JSONSkipDefaults:    true,
+		MaxMessageBytes:     conf.messageBytes,
+		MaxSendMessageBytes: conf.sendMessageBytes,
 	}
 
 	so.SetAuthInfoValidation(parser, requireAuth)
 	so.AddLoggingHooks(logger)
 
-	err := so.AddMetricsHooks(reg, opts...)
+	err := so.AddMetricsHooks(reg, conf.metrics...)
 	test.Mustf(t, err, "set up the RPC metrics")
 
-	srv, client := elephantine.NewTestAPIServer(t, logger)
+	so.AddShutdownDrain()
 
-	srv.RegisterAPI(testservice.NewTestServer(impl, so.ServerOptions()), so)
+	srv, client := elephantine.NewTestAPIServer(t, logger, conf.server...)
 
-	path, handler := testserviceconnect.NewTestServiceHandler(
+	srv.RegisterAPI(testservice.NewTestServiceServer(impl, so.ServerOptions()), so)
+
+	path, handler := testserviceconnect.NewTestServiceServiceHandler(
 		impl, so.HandlerOptions()...)
 
 	srv.RegisterConnect(path, handler, so)
 
-	srv.RegisterConnect(streamPath,
-		newStreamHandler(so.HandlerOptions()...), so)
+	streamPath, streamHandler := testserviceconnect.NewStreamServiceHandler(
+		streamImpl{}, so.HandlerOptions()...)
 
-	err = srv.ListenAndServe(t.Context())
+	srv.RegisterConnect(streamPath, streamHandler, so)
+
+	err = srv.ListenAndServe(conf.ctx)
 	test.Mustf(t, err, "start the test API server")
 
 	return &stack{
@@ -157,6 +222,7 @@ func newStack(
 		Registry: reg,
 		Records:  records,
 		Token:    test.AccessKey(t, key, test.Claims(t, "hugo", "test_read")),
+		Options:  so,
 		key:      key,
 		client:   client,
 	}
@@ -181,26 +247,105 @@ func (s *stack) HTTPClient(token string) *http.Client {
 	}
 }
 
-// StreamClient returns a client for the server-streaming fixture handler.
+// H2Client returns a client that speaks unencrypted HTTP/2, which a
+// bidirectional stream requires: connect-go answers a bidirectional call that
+// arrives over HTTP/1.1 with a bare 505, inside connect-go and before any
+// interceptor.
+func (s *stack) H2Client(token string) *http.Client {
+	var transport http.Transport
+
+	transport.Protocols = new(http.Protocols)
+	transport.Protocols.SetUnencryptedHTTP2(true)
+
+	return &http.Client{
+		Transport: &bearerTransport{
+			token: token,
+			next:  &transport,
+		},
+	}
+}
+
+// StreamClient returns a client for the streaming fixture service.
 func (s *stack) StreamClient(
-	token string,
-) *connect.Client[testservice.EchoRequest, testservice.EchoResponse] {
-	return newStreamClient(s.HTTPClient(token), "http://"+s.Addr)
+	token string, opts ...connect.ClientOption,
+) testserviceconnect.StreamServiceClient {
+	return testserviceconnect.NewStreamServiceClient(
+		s.HTTPClient(token), "http://"+s.Addr, opts...)
 }
 
 // Clients returns one client per protocol, all of them the plain protobuf
 // interface the service is implemented against.
-func (s *stack) Clients(token string) map[string]testservice.Test {
+func (s *stack) Clients(token string) map[string]testservice.TestService {
 	var (
 		client = s.HTTPClient(token)
 		base   = "http://" + s.Addr
 	)
 
-	return map[string]testservice.Test{
-		"twirp": testservice.NewTestProtobufClient(base, client),
-		"connect": testserviceconnect.NewTestServiceClient(
+	return map[string]testservice.TestService{
+		"twirp": testservice.NewTestServiceProtobufClient(base, client),
+		"connect": testserviceconnect.NewTestServiceServiceClient(
 			client, base),
 	}
+}
+
+// protocolResponsesHeader is the exposition header of
+// rpc_protocol_responses_total.
+const protocolResponsesHeader = "# TYPE rpc_protocol_responses_total counter\n"
+
+// gatherAndCompare is testutil.GatherAndCompare with the help text left out of
+// the comparison, so that a fixture carries the samples a test is about and
+// nothing else.
+//
+// A metric's help is documentation. Pinning it in a fixture means every
+// rewording fails a test that is not about wording, and it is what would
+// otherwise push the help strings out of the declaration and into exported
+// constants for the tests to reach.
+func gatherAndCompare(
+	g prometheus.Gatherer, expected string, names ...string,
+) error {
+	err := testutil.GatherAndCompare(
+		helplessGatherer{g}, strings.NewReader(expected), names...)
+	if err != nil {
+		return fmt.Errorf("compare the gathered metrics: %w", err)
+	}
+
+	return nil
+}
+
+// helplessGatherer is a Gatherer that strips the help text from what it
+// gathers. The registry builds the families afresh on every Gather, so
+// clearing them affects nothing but the comparison.
+type helplessGatherer struct {
+	prometheus.Gatherer
+}
+
+// noHelp is what the text parser gives a family whose exposition carries no
+// HELP line: an empty string rather than no string at all. The gathered side
+// has to be flattened to the same thing to compare equal.
+var noHelp = ""
+
+func (g helplessGatherer) Gather() ([]*dto.MetricFamily, error) {
+	families, err := g.Gatherer.Gather()
+	if err != nil {
+		return nil, fmt.Errorf("gather the metrics: %w", err)
+	}
+
+	for _, f := range families {
+		f.Help = &noHelp
+	}
+
+	return families, nil
+}
+
+// protocolResponse renders one rpc_protocol_responses_total sample of the
+// unary fixture service, since the full label set does not fit on a line.
+func protocolResponse(
+	clientID string, code string, method string, protocol string,
+) string {
+	return fmt.Sprintf(
+		"rpc_protocol_responses_total{client_id=%q,code=%q,method=%q,"+
+			"protocol=%q,service=%q} 1\n",
+		clientID, code, method, protocol, "TestService")
 }
 
 // bearerTransport adds an authorization header to every request, the way a
@@ -373,7 +518,7 @@ func TestDualStackLogMetadata(t *testing.T) {
 	}
 
 	test.EqualDiff(t, map[string]string{
-		"service": "Test",
+		"service": "TestService",
 		"method":  "Echo",
 		"sub":     "user://test/hugo",
 	}, metadata["twirp"], "set the log metadata on the Twirp stack")
@@ -448,13 +593,112 @@ func TestDualStackScopeCheck(t *testing.T) {
 	}, rpc.Meta(errs["connect"]), "name the accepted scopes")
 }
 
+// incompressibleMessage is a message of n bytes that gzip cannot shrink, since
+// the send limit is checked against the compressed size when the caller
+// accepts compression.
+func incompressibleMessage(t *testing.T, n int) string {
+	t.Helper()
+
+	raw := make([]byte, n)
+
+	_, err := rand.Read(raw)
+	test.Mustf(t, err, "read random bytes")
+
+	return base64.StdEncoding.EncodeToString(raw)[:n]
+}
+
+// TestDualStackSendMessageLimit checks that MaxSendMessageBytes is off unless
+// a service sets it, that setting it bounds what a Connect handler may answer
+// with, and that the Twirp mount of the same service is not bounded by it.
+//
+// The default is the load-bearing assertion. A send limit restricts responses
+// that both connect-go and the Twirp mount serve unbounded, and connect-go
+// checks it against the bytes on the wire, so a defaulted-on limit would
+// refuse the same call for one caller and serve it to another depending on
+// their Accept-Encoding. Where a service does opt in, the two stacks
+// deliberately disagree: Twirp answers what Connect refuses with
+// resource_exhausted.
+func TestDualStackSendMessageLimit(t *testing.T) {
+	const (
+		sendBytes    = 1024
+		messageBytes = 16 * sendBytes
+	)
+
+	message := incompressibleMessage(t, messageBytes)
+
+	t.Run("connect_refuses_what_twirp_answers", func(t *testing.T) {
+		s := newStack(t, testImpl{}, elephantine.ServiceAuthRequired,
+			withSendMessageBytes(sendBytes))
+
+		clients := s.Clients(s.Token)
+
+		res, err := clients["twirp"].Echo(t.Context(),
+			&testservice.EchoRequest{Message: message})
+		test.Mustf(t, err, "echo over Twirp")
+
+		test.Equalf(t, messageBytes, len(res.GetMessage()),
+			"get the whole message back over Twirp")
+
+		_, err = clients["connect"].Echo(t.Context(),
+			&testservice.EchoRequest{Message: message})
+		test.MustNotf(t, err, "get an error from Echo over Connect")
+
+		test.IsRPCError(t, err, connect.CodeResourceExhausted)
+	})
+
+	// The default has to be no limit: a service that never mentions
+	// MaxSendMessageBytes must answer over Connect everything it answers
+	// over Twirp, whatever the size.
+	//
+	// The message is deliberately larger than DefaultMaxBodyBytes, which
+	// is the limit an earlier draft of the design defaulted this field to.
+	// A message under that would pass whether the default is no limit or
+	// that one, so the test would not be testing anything.
+	t.Run("unset_is_no_limit", func(t *testing.T) {
+		// Twice the limit, not a byte over it. connect-go measures the
+		// wire size and the Connect client accepts gzip, so the margin
+		// has to be wider than whatever compression finds. Base64 of
+		// random bytes barely compresses — about half a percent — but
+		// half a percent of 8 MiB is still tens of kilobytes, so a
+		// message at limit+1024 lands under the limit compressed and
+		// the test passes whatever the default is. That fragility is
+		// itself the argument against defaulting the send limit on.
+		const bigBytes = int(elephantine.DefaultMaxBodyBytes) * 2
+
+		// Echo's response is its request, so the two limits that
+		// bound the request have to be lifted to reach the send
+		// side at all: the APIServer refuses a declared
+		// Content-Length over its body limit with a 413, and
+		// MaxMessageBytes refuses the message after that. Both are
+		// pinned elsewhere — TestAPIServerConnectBodyLimit and
+		// TestStreamMessageLimits — and it is the send side under
+		// test here.
+		s := newStack(t, testImpl{}, elephantine.ServiceAuthRequired,
+			withMessageBytes(-1),
+			withServerOptions(elephantine.APIServerMaxBodyBytes(
+				int64(bigBytes)*2)))
+
+		big := incompressibleMessage(t, bigBytes)
+
+		res, err := s.Clients(s.Token)["connect"].Echo(t.Context(),
+			&testservice.EchoRequest{Message: big})
+		test.Mustf(t, err, "echo over Connect")
+
+		test.Equalf(t, bigBytes, len(res.GetMessage()),
+			"get the whole message back over Connect")
+	})
+}
+
 // TestDualStackMetrics checks that the two stacks report the same series with
 // the same label values, and that the protocol counter tells them apart.
 func TestDualStackMetrics(t *testing.T) {
 	s := newStack(t, testImpl{}, elephantine.ServiceAuthRequired,
-		elephantine.WithTwirpMetricsCustomerFunc(func(_ context.Context) string {
-			return "acme"
-		}),
+		withMetricsOptions(
+			elephantine.WithTwirpMetricsCustomerFunc(
+				func(_ context.Context) string {
+					return "acme"
+				}),
+		),
 	)
 
 	// The client id label comes from the token, so that the counter names
@@ -482,33 +726,29 @@ func TestDualStackMetrics(t *testing.T) {
 			"get an error from an unauthenticated call over %s", name)
 	}
 
-	err := testutil.GatherAndCompare(s.Registry, strings.NewReader(`
-# HELP rpc_requests_total Number of RPC requests received.
+	err := gatherAndCompare(s.Registry, `
 # TYPE rpc_requests_total counter
-rpc_requests_total{customer="acme",method="Echo",service="Test"} 2
-rpc_requests_total{customer="acme",method="Fail",service="Test"} 2
-`), "rpc_requests_total")
+rpc_requests_total{customer="acme",method="Echo",service="TestService"} 2
+rpc_requests_total{customer="acme",method="Fail",service="TestService"} 2
+`, "rpc_requests_total")
 	test.Mustf(t, err, "count the requests with the same labels on both stacks")
 
-	err = testutil.GatherAndCompare(s.Registry, strings.NewReader(`
-# HELP rpc_responses_total Number of RPC responses sent.
+	err = gatherAndCompare(s.Registry, `
 # TYPE rpc_responses_total counter
-rpc_responses_total{customer="acme",method="Echo",service="Test",status="200"} 2
-rpc_responses_total{customer="acme",method="Echo",service="Test",status="401"} 2
-rpc_responses_total{customer="acme",method="Fail",service="Test",status="404"} 2
-`), "rpc_responses_total")
+rpc_responses_total{customer="acme",method="Echo",service="TestService",status="200"} 2
+rpc_responses_total{customer="acme",method="Echo",service="TestService",status="401"} 2
+rpc_responses_total{customer="acme",method="Fail",service="TestService",status="404"} 2
+`, "rpc_responses_total")
 	test.Mustf(t, err, "count the responses with the same labels on both stacks")
 
-	err = testutil.GatherAndCompare(s.Registry, strings.NewReader(`
-# HELP rpc_protocol_responses_total `+rpcmetrics.ProtocolResponsesHelp+`
-# TYPE rpc_protocol_responses_total counter
-rpc_protocol_responses_total{client_id="",code="unauthenticated",method="Echo",protocol="connect",service="Test"} 1
-rpc_protocol_responses_total{client_id="",code="unauthenticated",method="Echo",protocol="twirp",service="Test"} 1
-rpc_protocol_responses_total{client_id="eltest",code="not_found",method="Fail",protocol="connect",service="Test"} 1
-rpc_protocol_responses_total{client_id="eltest",code="not_found",method="Fail",protocol="twirp",service="Test"} 1
-rpc_protocol_responses_total{client_id="eltest",code="ok",method="Echo",protocol="connect",service="Test"} 1
-rpc_protocol_responses_total{client_id="eltest",code="ok",method="Echo",protocol="twirp",service="Test"} 1
-`), "rpc_protocol_responses_total")
+	err = gatherAndCompare(s.Registry, (protocolResponsesHeader +
+		protocolResponse("", "unauthenticated", "Echo", "connect") +
+		protocolResponse("", "unauthenticated", "Echo", "twirp") +
+		protocolResponse("eltest", "not_found", "Fail", "connect") +
+		protocolResponse("eltest", "not_found", "Fail", "twirp") +
+		protocolResponse("eltest", "ok", "Echo", "connect") +
+		protocolResponse("eltest", "ok", "Echo", "twirp")),
+		"rpc_protocol_responses_total")
 	test.Mustf(t, err, "count the responses per protocol and code")
 }
 
@@ -531,7 +771,7 @@ func TestConnectGRPC(t *testing.T) {
 		},
 	}
 
-	grpc := testserviceconnect.NewTestServiceClient(
+	grpc := testserviceconnect.NewTestServiceServiceClient(
 		&client, "http://"+s.Addr, connect.WithGRPC())
 
 	res, err := grpc.Echo(t.Context(),
@@ -542,11 +782,10 @@ func TestConnectGRPC(t *testing.T) {
 	test.Equalf(t, "user://test/hugo", res.GetSubject(),
 		"authenticate the caller over gRPC too")
 
-	err = testutil.GatherAndCompare(s.Registry, strings.NewReader(`
-# HELP rpc_protocol_responses_total `+rpcmetrics.ProtocolResponsesHelp+`
+	err = gatherAndCompare(s.Registry, `
 # TYPE rpc_protocol_responses_total counter
-rpc_protocol_responses_total{client_id="",code="ok",method="Echo",protocol="grpc",service="Test"} 1
-`), "rpc_protocol_responses_total")
+rpc_protocol_responses_total{client_id="",code="ok",method="Echo",protocol="grpc",service="TestService"} 1
+`, "rpc_protocol_responses_total")
 	test.Mustf(t, err, "report the response under the gRPC protocol")
 }
 
@@ -567,11 +806,11 @@ func TestDefaultServiceOptions(t *testing.T) {
 
 	test.NotNilf(t, so.Hooks, "install the Twirp hooks")
 
-	test.Equalf(t, 3, len(so.Interceptors),
-		"install the metrics, logging and authentication interceptors")
+	test.Equalf(t, 4, len(so.Interceptors),
+		"install the metrics, logging, authentication and drain interceptors")
 
-	test.Equalf(t, 1, len(so.HandlerOptions()),
-		"turn the interceptors into a handler option")
+	test.Equalf(t, 3, len(so.HandlerOptions()),
+		"turn the interceptors and the message limits into handler options")
 
 	if so.AuthMiddleware == nil {
 		t.Fatal("the authentication middleware should be installed")
@@ -586,7 +825,7 @@ func TestPropagateHeaders(t *testing.T) {
 		seen http.Header
 	)
 
-	path, handler := testserviceconnect.NewTestServiceHandler(testImpl{})
+	path, handler := testserviceconnect.NewTestServiceServiceHandler(testImpl{})
 
 	mux := http.NewServeMux()
 
@@ -604,7 +843,7 @@ func TestPropagateHeaders(t *testing.T) {
 
 	t.Cleanup(srv.Close)
 
-	client := testserviceconnect.NewTestServiceClient(
+	client := testserviceconnect.NewTestServiceServiceClient(
 		srv.Client(), srv.URL,
 		connect.WithInterceptors(rpc.PropagateHeaders()))
 
@@ -667,73 +906,6 @@ func withSubject(ctx context.Context) context.Context {
 	return ctx
 }
 
-// The fixture service is unary only, since the plain interface every elephant
-// service implements has no place for a stream, so the streaming tests build a
-// server-streaming handler with connect-go's own constructors. It is mounted
-// next to the fixture service on every test stack.
-const (
-	streamPath      = "/elephantine.testservice.v1.Streamer/"
-	streamProcedure = streamPath + "Echo"
-)
-
-// newStreamHandler is a server-streaming handler that answers with one message.
-func newStreamHandler(opts ...connect.HandlerOption) http.Handler {
-	return connect.NewServerStreamHandler(streamProcedure,
-		func(
-			_ context.Context,
-			req *connect.Request[testservice.EchoRequest],
-			stream *connect.ServerStream[testservice.EchoResponse],
-		) error {
-			err := stream.Send(&testservice.EchoResponse{
-				Message: req.Msg.GetMessage(),
-			})
-			if err != nil {
-				return fmt.Errorf("send the message: %w", err)
-			}
-
-			return nil
-		}, opts...)
-}
-
-// newStreamClient is a client for the server-streaming fixture handler.
-func newStreamClient(
-	httpClient connect.HTTPClient, baseURL string,
-) *connect.Client[testservice.EchoRequest, testservice.EchoResponse] {
-	return connect.NewClient[testservice.EchoRequest, testservice.EchoResponse](
-		httpClient, baseURL+streamProcedure,
-		connect.WithClientOptions())
-}
-
-// callStream makes the streaming call and returns the error the caller ends up
-// with, which for a stream is the one the receive loop reports.
-func callStream(
-	ctx context.Context,
-	client *connect.Client[testservice.EchoRequest, testservice.EchoResponse],
-) (string, error) {
-	stream, err := client.CallServerStream(ctx,
-		connect.NewRequest(&testservice.EchoRequest{Message: echoMessage}))
-	if err != nil {
-		return "", err //nolint:wrapcheck // the test asserts on the code.
-	}
-
-	defer func() {
-		_ = stream.Close()
-	}()
-
-	var message string
-
-	for stream.Receive() {
-		message = stream.Msg().GetMessage()
-	}
-
-	err = stream.Err()
-	if err != nil {
-		return "", err //nolint:wrapcheck // the test asserts on the code.
-	}
-
-	return message, nil
-}
-
 // TestStreamingAuthentication checks that a streaming call is authenticated
 // like a unary one. connect.UnaryInterceptorFunc passes streaming calls
 // through untouched, so an interceptor written with it would let an
@@ -744,20 +916,23 @@ func TestStreamingAuthentication(t *testing.T) {
 	s := newStack(t, testImpl{}, elephantine.ServiceAuthRequired)
 
 	t.Run("authenticated", func(t *testing.T) {
-		message, err := callStream(t.Context(), s.StreamClient(s.Token))
+		emitted, err := emit(t.Context(), s.StreamClient(s.Token),
+			&testservice.EmitRequest{Count: 1})
 		test.Mustf(t, err, "call the streaming method")
 
-		test.Equalf(t, echoMessage, message, "echo the message")
+		test.Equalf(t, 1, len(emitted), "receive one message")
 	})
 
 	t.Run("no_authorization", func(t *testing.T) {
-		_, err := callStream(t.Context(), s.StreamClient(""))
+		_, err := emit(t.Context(), s.StreamClient(""),
+			&testservice.EmitRequest{Count: 1})
 
 		test.IsRPCError(t, err, connect.CodeUnauthenticated)
 	})
 
 	t.Run("invalid_authorization", func(t *testing.T) {
-		_, err := callStream(t.Context(), s.StreamClient("not-a-token"))
+		_, err := emit(t.Context(), s.StreamClient("not-a-token"),
+			&testservice.EmitRequest{Count: 1})
 
 		test.IsRPCError(t, err, connect.CodeUnauthenticated)
 	})
@@ -784,9 +959,12 @@ func TestStreamingWithoutAuthMiddleware(t *testing.T) {
 	mux := http.NewServeMux()
 
 	// Mounted directly, so nothing runs opt.AuthMiddleware.
-	mux.Handle(streamPath, newStreamHandler(so.HandlerOptions()...))
+	streamPath, streamHandler := testserviceconnect.NewStreamServiceHandler(
+		streamImpl{}, so.HandlerOptions()...)
 
-	path, handler := testserviceconnect.NewTestServiceHandler(
+	mux.Handle(streamPath, streamHandler)
+
+	path, handler := testserviceconnect.NewTestServiceServiceHandler(
 		testImpl{}, so.HandlerOptions()...)
 
 	mux.Handle(path, handler)
@@ -795,10 +973,13 @@ func TestStreamingWithoutAuthMiddleware(t *testing.T) {
 
 	t.Cleanup(srv.Close)
 
-	_, err = callStream(t.Context(), newStreamClient(srv.Client(), srv.URL))
+	stream := testserviceconnect.NewStreamServiceClient(
+		srv.Client(), srv.URL)
+
+	_, err = emit(t.Context(), stream, &testservice.EmitRequest{Count: 1})
 	test.IsRPCError(t, err, connect.CodeUnauthenticated)
 
-	unary := testserviceconnect.NewTestServiceClient(srv.Client(), srv.URL)
+	unary := testserviceconnect.NewTestServiceServiceClient(srv.Client(), srv.URL)
 
 	_, err = unary.Echo(t.Context(), &testservice.EchoRequest{})
 	test.IsRPCError(t, err, connect.CodeUnauthenticated)
@@ -831,18 +1012,16 @@ func TestBareContextErrorCode(t *testing.T) {
 		"status_code": "499",
 	}, logged[0], "log the cancellation as canceled")
 
-	err = testutil.GatherAndCompare(s.Registry, strings.NewReader(`
-# HELP rpc_protocol_responses_total `+rpcmetrics.ProtocolResponsesHelp+`
+	err = gatherAndCompare(s.Registry, `
 # TYPE rpc_protocol_responses_total counter
-rpc_protocol_responses_total{client_id="",code="canceled",method="Fail",protocol="connect",service="Test"} 1
-`), "rpc_protocol_responses_total")
+rpc_protocol_responses_total{client_id="",code="canceled",method="Fail",protocol="connect",service="TestService"} 1
+`, "rpc_protocol_responses_total")
 	test.Mustf(t, err, "count the response under the canceled code")
 
-	err = testutil.GatherAndCompare(s.Registry, strings.NewReader(`
-# HELP rpc_responses_total Number of RPC responses sent.
+	err = gatherAndCompare(s.Registry, `
 # TYPE rpc_responses_total counter
-rpc_responses_total{customer="",method="Fail",service="Test",status="499"} 1
-`), "rpc_responses_total")
+rpc_responses_total{customer="",method="Fail",service="TestService",status="499"} 1
+`, "rpc_responses_total")
 	test.Mustf(t, err, "report the status Connect answers a cancellation with")
 }
 
@@ -864,17 +1043,16 @@ func TestGRPCResponseStatus(t *testing.T) {
 		},
 	}
 
-	grpc := testserviceconnect.NewTestServiceClient(
+	grpc := testserviceconnect.NewTestServiceServiceClient(
 		&client, "http://"+s.Addr, connect.WithGRPC())
 
 	_, err := grpc.Fail(t.Context(),
 		&testservice.FailRequest{Code: codeNotFound})
 	test.MustNotf(t, err, "get an error from Fail over gRPC")
 
-	err = testutil.GatherAndCompare(s.Registry, strings.NewReader(`
-# HELP rpc_responses_total Number of RPC responses sent.
+	err = gatherAndCompare(s.Registry, `
 # TYPE rpc_responses_total counter
-rpc_responses_total{customer="",method="Fail",service="Test",status="200"} 1
-`), "rpc_responses_total")
+rpc_responses_total{customer="",method="Fail",service="TestService",status="200"} 1
+`, "rpc_responses_total")
 	test.Mustf(t, err, "report the status gRPC actually answers with")
 }

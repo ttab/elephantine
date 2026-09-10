@@ -21,8 +21,8 @@ import (
 const _ = connect.IsAtLeastVersion1_13_0
 
 const (
-	// TestName is the fully-qualified name of the Test service.
-	TestName = "elephantine.testservice.v1.Test"
+	// TestServiceName is the fully-qualified name of the TestService service.
+	TestServiceName = "elephantine.testservice.v1.TestService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -33,14 +33,14 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
-	// TestEchoProcedure is the fully-qualified name of the Test's Echo RPC.
-	TestEchoProcedure = "/elephantine.testservice.v1.Test/Echo"
-	// TestFailProcedure is the fully-qualified name of the Test's Fail RPC.
-	TestFailProcedure = "/elephantine.testservice.v1.Test/Fail"
+	// TestServiceEchoProcedure is the fully-qualified name of the TestService's Echo RPC.
+	TestServiceEchoProcedure = "/elephantine.testservice.v1.TestService/Echo"
+	// TestServiceFailProcedure is the fully-qualified name of the TestService's Fail RPC.
+	TestServiceFailProcedure = "/elephantine.testservice.v1.TestService/Fail"
 )
 
-// TestClient is a client for the elephantine.testservice.v1.Test service.
-type TestClient interface {
+// TestServiceClient is a client for the elephantine.testservice.v1.TestService service.
+type TestServiceClient interface {
 	// Echo returns the message it was given, together with what the service
 	// could see of the caller.
 	Echo(context.Context, *connect.Request[testservice.EchoRequest]) (*connect.Response[testservice.EchoResponse], error)
@@ -48,50 +48,50 @@ type TestClient interface {
 	Fail(context.Context, *connect.Request[testservice.FailRequest]) (*connect.Response[testservice.FailResponse], error)
 }
 
-// NewTestClient constructs a client for the elephantine.testservice.v1.Test service. By default, it
-// uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and sends
-// uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC() or
-// connect.WithGRPCWeb() options.
+// NewTestServiceClient constructs a client for the elephantine.testservice.v1.TestService service.
+// By default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped
+// responses, and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
 //
 // The URL supplied here should be the base URL for the Connect or gRPC server (for example,
 // http://api.acme.com or https://acme.com/grpc).
-func NewTestClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) TestClient {
+func NewTestServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) TestServiceClient {
 	baseURL = strings.TrimRight(baseURL, "/")
-	testMethods := testservice.File_internal_testservice_testservice_proto.Services().ByName("Test").Methods()
-	return &testClient{
+	testServiceMethods := testservice.File_internal_testservice_testservice_proto.Services().ByName("TestService").Methods()
+	return &testServiceClient{
 		echo: connect.NewClient[testservice.EchoRequest, testservice.EchoResponse](
 			httpClient,
-			baseURL+TestEchoProcedure,
-			connect.WithSchema(testMethods.ByName("Echo")),
+			baseURL+TestServiceEchoProcedure,
+			connect.WithSchema(testServiceMethods.ByName("Echo")),
 			connect.WithClientOptions(opts...),
 		),
 		fail: connect.NewClient[testservice.FailRequest, testservice.FailResponse](
 			httpClient,
-			baseURL+TestFailProcedure,
-			connect.WithSchema(testMethods.ByName("Fail")),
+			baseURL+TestServiceFailProcedure,
+			connect.WithSchema(testServiceMethods.ByName("Fail")),
 			connect.WithClientOptions(opts...),
 		),
 	}
 }
 
-// testClient implements TestClient.
-type testClient struct {
+// testServiceClient implements TestServiceClient.
+type testServiceClient struct {
 	echo *connect.Client[testservice.EchoRequest, testservice.EchoResponse]
 	fail *connect.Client[testservice.FailRequest, testservice.FailResponse]
 }
 
-// Echo calls elephantine.testservice.v1.Test.Echo.
-func (c *testClient) Echo(ctx context.Context, req *connect.Request[testservice.EchoRequest]) (*connect.Response[testservice.EchoResponse], error) {
+// Echo calls elephantine.testservice.v1.TestService.Echo.
+func (c *testServiceClient) Echo(ctx context.Context, req *connect.Request[testservice.EchoRequest]) (*connect.Response[testservice.EchoResponse], error) {
 	return c.echo.CallUnary(ctx, req)
 }
 
-// Fail calls elephantine.testservice.v1.Test.Fail.
-func (c *testClient) Fail(ctx context.Context, req *connect.Request[testservice.FailRequest]) (*connect.Response[testservice.FailResponse], error) {
+// Fail calls elephantine.testservice.v1.TestService.Fail.
+func (c *testServiceClient) Fail(ctx context.Context, req *connect.Request[testservice.FailRequest]) (*connect.Response[testservice.FailResponse], error) {
 	return c.fail.CallUnary(ctx, req)
 }
 
-// TestHandler is an implementation of the elephantine.testservice.v1.Test service.
-type TestHandler interface {
+// TestServiceHandler is an implementation of the elephantine.testservice.v1.TestService service.
+type TestServiceHandler interface {
 	// Echo returns the message it was given, together with what the service
 	// could see of the caller.
 	Echo(context.Context, *connect.Request[testservice.EchoRequest]) (*connect.Response[testservice.EchoResponse], error)
@@ -99,44 +99,44 @@ type TestHandler interface {
 	Fail(context.Context, *connect.Request[testservice.FailRequest]) (*connect.Response[testservice.FailResponse], error)
 }
 
-// NewTestHandler builds an HTTP handler from the service implementation. It returns the path on
-// which to mount the handler and the handler itself.
+// NewTestServiceHandler builds an HTTP handler from the service implementation. It returns the path
+// on which to mount the handler and the handler itself.
 //
 // By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
 // and JSON codecs. They also support gzip compression.
-func NewTestHandler(svc TestHandler, opts ...connect.HandlerOption) (string, http.Handler) {
-	testMethods := testservice.File_internal_testservice_testservice_proto.Services().ByName("Test").Methods()
-	testEchoHandler := connect.NewUnaryHandler(
-		TestEchoProcedure,
+func NewTestServiceHandler(svc TestServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	testServiceMethods := testservice.File_internal_testservice_testservice_proto.Services().ByName("TestService").Methods()
+	testServiceEchoHandler := connect.NewUnaryHandler(
+		TestServiceEchoProcedure,
 		svc.Echo,
-		connect.WithSchema(testMethods.ByName("Echo")),
+		connect.WithSchema(testServiceMethods.ByName("Echo")),
 		connect.WithHandlerOptions(opts...),
 	)
-	testFailHandler := connect.NewUnaryHandler(
-		TestFailProcedure,
+	testServiceFailHandler := connect.NewUnaryHandler(
+		TestServiceFailProcedure,
 		svc.Fail,
-		connect.WithSchema(testMethods.ByName("Fail")),
+		connect.WithSchema(testServiceMethods.ByName("Fail")),
 		connect.WithHandlerOptions(opts...),
 	)
-	return "/elephantine.testservice.v1.Test/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return "/elephantine.testservice.v1.TestService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case TestEchoProcedure:
-			testEchoHandler.ServeHTTP(w, r)
-		case TestFailProcedure:
-			testFailHandler.ServeHTTP(w, r)
+		case TestServiceEchoProcedure:
+			testServiceEchoHandler.ServeHTTP(w, r)
+		case TestServiceFailProcedure:
+			testServiceFailHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
 	})
 }
 
-// UnimplementedTestHandler returns CodeUnimplemented from all methods.
-type UnimplementedTestHandler struct{}
+// UnimplementedTestServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedTestServiceHandler struct{}
 
-func (UnimplementedTestHandler) Echo(context.Context, *connect.Request[testservice.EchoRequest]) (*connect.Response[testservice.EchoResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("elephantine.testservice.v1.Test.Echo is not implemented"))
+func (UnimplementedTestServiceHandler) Echo(context.Context, *connect.Request[testservice.EchoRequest]) (*connect.Response[testservice.EchoResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("elephantine.testservice.v1.TestService.Echo is not implemented"))
 }
 
-func (UnimplementedTestHandler) Fail(context.Context, *connect.Request[testservice.FailRequest]) (*connect.Response[testservice.FailResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("elephantine.testservice.v1.Test.Fail is not implemented"))
+func (UnimplementedTestServiceHandler) Fail(context.Context, *connect.Request[testservice.FailRequest]) (*connect.Response[testservice.FailResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("elephantine.testservice.v1.TestService.Fail is not implemented"))
 }
