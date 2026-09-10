@@ -771,17 +771,57 @@ other way: services import both.
 
 ### A native declaration
 
-**The layout says which shape a service is.** A declaration in the flat layout,
-`<proto root>/<app>/service.proto`, is a dual-stack service and generates the
-adapters and — while `rpc.Twirp` is set — the Twirp code. A declaration in the
-versioned layout is native, and generates `protoc-gen-go` and
-`protoc-gen-connect-go` output only: no adapters, no plain interface, no Twirp,
-and streaming methods allowed. `mage rpc:stub` only ever writes the versioned
-layout, and nothing new goes into the flat one.
+**A service has one of three shapes**, and the shape decides what is generated
+for it:
 
-A native declaration is `elephant.<app>.v1` in
+| Shape | Serves | Implements | Streaming |
+|---|---|---|---|
+| `rpc.ShapeDualStack` | Connect and `/twirp/` | the plain protobuf interface | no |
+| `rpc.ShapeConnect` | Connect | the same plain interface | no |
+| `rpc.ShapeNative` | Connect | connect-go's own handler interface | yes |
+
+The layout picks the default: a declaration in the flat layout,
+`<proto root>/<app>/service.proto`, is `ShapeDualStack` while `rpc.Twirp` is
+set and `ShapeConnect` when it is not; one in the versioned layout is
+`ShapeNative`. `mage rpc:stub` only ever writes the versioned layout, and
+nothing new goes into the flat one.
+
+**`rpc.Shapes` overrides that per service, and the override is not a corner
+case — it is how an existing service moves.** A service's proto package is in
+its procedure path, and the versioned layout is what puts a version in the
+package, so if the layout alone decided the shape, an existing service could
+reach `ShapeNative` only by moving directory — changing its package and
+breaking every caller's path. It would mean no service could adopt streaming
+without a coordinated redeploy of everything that calls it. Naming it in
+`rpc.Shapes` changes what it generates and nothing else:
+
+```go
+rpc.Twirp = true
+
+rpc.Shapes = map[string]rpc.Shape{
+	// Off Twirp and onto connect-go's own interface, where it stands.
+	"repository": rpc.ShapeNative,
+	// Moved layout, still has Twirp callers.
+	"rpc/elephant/collab/v1": rpc.ShapeDualStack,
+}
+```
+
+Retiring Twirp is the same story one shape down. `rpc.Twirp` is a
+repository-wide default, so in a repository holding several services —
+elephant-api holds six — `ShapeConnect` is how one of them stops serving
+`/twirp/` without waiting for the rest.
+
+Moving a service to `ShapeNative` does change the generated Go its callers
+compile against: the plain-interface client constructor gives way to
+connect-go's `*connect.Client`. That is a library break, which a consumer
+adopts on its own schedule, and it is deliberately the only kind of break in
+this move — the wire contract does not shift.
+
+A *new* native declaration is `elephant.<app>.v1` in
 `<proto root>/elephant/<app>/v1/service.proto`, and passes buf's `STANDARD`
-lint rules with no exemptions. The nesting is not decoration:
+lint rules with no exemptions. An existing service moved to `ShapeNative` stays
+where it is and keeps whatever exemptions it already has — the point of moving
+it in place is that nothing about the declaration changes. The nesting is not decoration:
 `PACKAGE_DIRECTORY_MATCH` is checked against the buf module root, so the
 package's elements have to be the directories under it. Both the package name
 and the service name end up in the procedure path
@@ -806,9 +846,9 @@ A new service is native. There is no Twirp mount, no `rpc.Twirp`, and no
 
 1. Declare the service as `elephant.<name>.v1` in
    `rpc/elephant/<name>/v1/service.proto` (`mage rpc:stub` scaffolds one) and
-   run `mage rpc:generate`. The versioned layout is what makes it native, so
-   the output is `service.pb.go` and `<pkg>connect/service.connect.go` and
-   nothing else.
+   run `mage rpc:generate`. The versioned layout defaults it to
+   `rpc.ShapeNative`, so the output is `service.pb.go` and
+   `<pkg>connect/service.connect.go` and nothing else.
 2. Implement the `<Service>Handler` interface `protoc-gen-connect-go` generates.
    Return errors through `rpc`, and check scopes with `rpc.RequireAnyScope` in
    every method — including before the first send of a stream.
