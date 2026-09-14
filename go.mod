@@ -19,7 +19,7 @@ require (
 	github.com/ttab/mage v0.13.0
 	github.com/twitchtv/twirp v8.1.3+incompatible
 	github.com/urfave/cli/v3 v3.11.0
-	golang.org/x/oauth2 v0.36.0
+	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.22.0
 	google.golang.org/protobuf v1.36.12
 )
