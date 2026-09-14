@@ -16,7 +16,7 @@ require (
 	github.com/magefile/mage v1.17.2
 	github.com/prometheus/client_golang v1.24.1
 	github.com/ryanuber/go-glob v1.0.0
-	github.com/ttab/mage v0.13.0
+	github.com/ttab/mage v0.14.0
 	github.com/twitchtv/twirp v8.1.3+incompatible
 	github.com/urfave/cli/v3 v3.11.0
 	golang.org/x/oauth2 v0.36.0
