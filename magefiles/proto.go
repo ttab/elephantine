@@ -17,10 +17,17 @@ import (
 // Proto compiles the protobuf sources in this repository.
 type Proto mg.Namespace
 
-// protoPaths are the directories holding protobuf sources. The rpc package
-// declares the ErrorMeta detail the error helpers carry metadata in, and the
-// testservice package is the fixture the dual-stack tests are run against.
-var protoPaths = []string{"rpc", "internal/testservice"}
+// dualStackPaths are the sources generated for both protocols. The rpc package
+// declares the ErrorMeta detail the error helpers carry metadata in, and
+// testservice.proto is the unary fixture the dual-stack tests are run against.
+var dualStackPaths = []string{"rpc", "internal/testservice/testservice.proto"}
+
+// nativePaths are the Connect-native sources, generated with protoc-gen-go and
+// protoc-gen-connect-go and nothing else. stream.proto is the streaming
+// fixture: a streaming method has no place in the plain interface a dual-stack
+// service implements, so both protoc-gen-elephant-rpc and protoc-gen-twirp
+// fail generation on one.
+var nativePaths = []string{"internal/testservice/stream.proto"}
 
 // Generate compiles the protobuf sources with buf and the plugin versions
 // github.com/ttab/mage/rpc pins for the fleet, so that the committed generated
@@ -58,35 +65,72 @@ func (Proto) Generate() error {
 		return fmt.Errorf("write the protoc-gen-twirp module: %w", err)
 	}
 
+	var (
+		protocGenGo = plugin{
+			Local: goRun("google.golang.org/protobuf/cmd/protoc-gen-go",
+				rpc.ProtocGenGoVersion),
+		}
+		connectGo = plugin{
+			Local: goRun("connectrpc.com/connect/cmd/protoc-gen-connect-go",
+				rpc.ConnectGoVersion),
+		}
+		elephantRPC = plugin{
+			// The plugin in this repository, run from the
+			// checkout rather than at a version, since this is
+			// where it is developed.
+			Local: []string{"go", "run", "./cmd/protoc-gen-elephant-rpc"},
+		}
+		twirpGen = plugin{Local: twirp}
+	)
+
+	runs := []struct {
+		plugins []plugin
+		paths   []string
+	}{
+		{
+			plugins: []plugin{
+				protocGenGo, connectGo, elephantRPC, twirpGen,
+			},
+			paths: dualStackPaths,
+		},
+		{
+			plugins: []plugin{protocGenGo, connectGo},
+			paths:   nativePaths,
+		},
+	}
+
+	for _, run := range runs {
+		err := generate(env, run.plugins, run.paths)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// plugin is one entry in the buf generation template. Every plugin writes
+// source-relative output into the working directory.
+type plugin struct {
+	Local []string
+}
+
+// generate runs buf with a template built from the plugins, scoped to the
+// paths.
+func generate(env map[string]string, plugins []plugin, paths []string) error {
+	entries := make([]map[string]any, len(plugins))
+
+	for i, p := range plugins {
+		entries[i] = map[string]any{
+			"local": p.Local,
+			"out":   ".",
+			"opt":   []string{"paths=source_relative"},
+		}
+	}
+
 	template, err := json.Marshal(map[string]any{
 		"version": "v2",
-		"plugins": []map[string]any{
-			{
-				"local": goRun("google.golang.org/protobuf/cmd/protoc-gen-go",
-					rpc.ProtocGenGoVersion),
-				"out": ".",
-				"opt": []string{"paths=source_relative"},
-			},
-			{
-				"local": goRun("connectrpc.com/connect/cmd/protoc-gen-connect-go",
-					rpc.ConnectGoVersion),
-				"out": ".",
-				"opt": []string{"paths=source_relative"},
-			},
-			{
-				// The plugin in this repository, run from the
-				// checkout rather than at a version, since
-				// this is where it is developed.
-				"local": []string{"go", "run", "./cmd/protoc-gen-elephant-rpc"},
-				"out":   ".",
-				"opt":   []string{"paths=source_relative"},
-			},
-			{
-				"local": twirp,
-				"out":   ".",
-				"opt":   []string{"paths=source_relative"},
-			},
-		},
+		"plugins": entries,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal the generation template: %w", err)
@@ -94,7 +138,7 @@ func (Proto) Generate() error {
 
 	args := []string{"generate", "--template", string(template)}
 
-	for _, p := range protoPaths {
+	for _, p := range paths {
 		args = append(args, "--path", p)
 	}
 

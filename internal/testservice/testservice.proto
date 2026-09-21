@@ -4,10 +4,10 @@ package elephantine.testservice.v1;
 
 option go_package = "github.com/ttab/elephantine/internal/testservice";
 
-// Test is the fixture service the dual-stack tests in the rpc package are run
-// against. It is generated with the same plugins and versions the fleet
-// generates its services with.
-service Test {
+// TestService is the fixture service the dual-stack tests in the rpc package
+// are run against. It is generated with the same plugins and versions the
+// fleet generates its services with.
+service TestService {
   // Echo returns the message it was given, together with what the service
   // could see of the caller.
   rpc Echo(EchoRequest) returns (EchoResponse);

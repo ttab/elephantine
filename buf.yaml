@@ -1,0 +1,24 @@
+version: v2
+modules:
+  - path: .
+    excludes:
+      # Plugin fixtures. They are compiled by
+      # go test ./cmd/protoc-gen-elephant-rpc against a workspace of
+      # their own, and do not resolve in this one.
+      - cmd/protoc-gen-elephant-rpc/testdata
+lint:
+  use:
+    - STANDARD
+  ignore_only:
+    PACKAGE_DIRECTORY_MATCH:
+      # elephantine.rpc is on the wire as the ErrorMeta detail type
+      # name, and internal/testservice is a fixture that has to live
+      # where the Go package does.
+      - internal/testservice/stream.proto
+      - internal/testservice/testservice.proto
+      - rpc/errormeta.proto
+    PACKAGE_VERSION_SUFFIX:
+      - rpc/errormeta.proto
+breaking:
+  use:
+    - FILE

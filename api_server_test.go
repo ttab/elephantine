@@ -146,6 +146,93 @@ func TestAPIServerMaxBodyBytes(t *testing.T) {
 	}
 }
 
+// TestAPIServerConnectBodyLimit checks that a Connect subtree is exempt from
+// the stream-level body limit and that nothing else is.
+//
+// http.MaxBytesReader counts the bytes read over the life of the request, and
+// a client or bidirectional stream's request body is the stream, so a stream
+// would die once its cumulative traffic passed the limit — a limit nobody set
+// for that purpose. Connect requests are bounded per message instead, through
+// ServiceOptions.MaxMessageBytes. The Twirp services and whatever a service
+// mounts on the Mux itself keep the stream-level limit, which is what stops
+// one caller pinning an unbounded allocation per in-flight request.
+func TestAPIServerConnectBodyLimit(t *testing.T) {
+	const limit = 1024
+
+	logger := slog.New(test.NewLogHandler(t, slog.LevelDebug))
+
+	srv, client := elephantine.NewTestAPIServer(t, logger,
+		elephantine.APIServerMaxBodyBytes(limit),
+	)
+
+	srv.Mux.Handle("POST /drain", drainHandler())
+
+	srv.RegisterConnect(
+		"/elephantine.test.v1.Service/", drainHandler(),
+		elephantine.ServiceOptions{})
+
+	err := srv.ListenAndServe(context.Background())
+	test.Mustf(t, err, "start test API server")
+
+	// A body of unknown length, which is the shape of a stream: only the
+	// http.MaxBytesReader can refuse it, and only once the handler has read
+	// past the limit.
+	streamed := func(t *testing.T, path string) *http.Response {
+		t.Helper()
+
+		body := io.NopCloser(bytes.NewReader(
+			bytes.Repeat([]byte("a"), limit+1)))
+
+		req, err := http.NewRequestWithContext(t.Context(),
+			http.MethodPost, "http://"+srv.Addr()+path, body)
+		test.Mustf(t, err, "create test request")
+
+		req.ContentLength = -1
+
+		res, err := client.Do(req)
+		test.Mustf(t, err, "make request")
+
+		return res
+	}
+
+	t.Run("connect_subtree", func(t *testing.T) {
+		res := streamed(t, "/elephantine.test.v1.Service/Method")
+
+		test.Mustf(t, res.Body.Close(), "close response body")
+
+		test.Equalf(t, http.StatusOK, res.StatusCode,
+			"read a body past the stream-level limit")
+	})
+
+	t.Run("other_mount", func(t *testing.T) {
+		res := streamed(t, "/drain")
+
+		test.Mustf(t, res.Body.Close(), "close response body")
+
+		test.Equalf(t, http.StatusRequestEntityTooLarge, res.StatusCode,
+			"keep the stream-level limit off a Connect subtree")
+	})
+
+	// The cheap refusal of a body that declares itself too large stays on
+	// every path: a stream declares no Content-Length, so it costs a stream
+	// nothing.
+	t.Run("connect_declared_over_the_limit", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(t.Context(),
+			http.MethodPost,
+			"http://"+srv.Addr()+"/elephantine.test.v1.Service/Method",
+			strings.NewReader(strings.Repeat("a", limit+1)))
+		test.Mustf(t, err, "create test request")
+
+		res, err := client.Do(req)
+		test.Mustf(t, err, "make request")
+
+		test.Mustf(t, res.Body.Close(), "close response body")
+
+		test.Equalf(t, http.StatusRequestEntityTooLarge, res.StatusCode,
+			"refuse an over-declared body on a Connect path too")
+	})
+}
+
 // TestAPIServerDefaultMaxBodyBytes checks that an API server that wasn't given
 // APIServerMaxBodyBytes still bounds request bodies at DefaultMaxBodyBytes.
 //

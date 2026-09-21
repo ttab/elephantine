@@ -11,22 +11,23 @@ import (
 	http "net/http"
 )
 
-// NewTestServiceHandler builds an HTTP handler for the elephantine.testservice.v1.Test service from
-// an implementation of the plain testservice.Test interface, and returns the path to mount it on
-// together with the handler, just like NewTestHandler does.
+// NewTestServiceServiceHandler builds an HTTP handler for the
+// elephantine.testservice.v1.TestService service from an implementation of the plain
+// testservice.TestService interface, and returns the path to mount it on together with the handler,
+// just like NewTestServiceHandler does.
 //
 // Errors from the implementation are passed through untouched, so an implementation that wants to
 // control the response code returns a *connect.Error.
-func NewTestServiceHandler(svc testservice.Test, opts ...connect.HandlerOption) (string, http.Handler) {
-	return NewTestHandler(&testServiceHandler{svc: svc}, opts...)
+func NewTestServiceServiceHandler(svc testservice.TestService, opts ...connect.HandlerOption) (string, http.Handler) {
+	return NewTestServiceHandler(&testServiceServiceHandler{svc: svc}, opts...)
 }
 
-// testServiceHandler implements TestHandler on top of a testservice.Test.
-type testServiceHandler struct {
-	svc testservice.Test
+// testServiceServiceHandler implements TestServiceHandler on top of a testservice.TestService.
+type testServiceServiceHandler struct {
+	svc testservice.TestService
 }
 
-func (h *testServiceHandler) Echo(ctx context.Context, req *connect.Request[testservice.EchoRequest]) (*connect.Response[testservice.EchoResponse], error) {
+func (h *testServiceServiceHandler) Echo(ctx context.Context, req *connect.Request[testservice.EchoRequest]) (*connect.Response[testservice.EchoResponse], error) {
 	res, err := h.svc.Echo(ctx, req.Msg)
 	if err != nil {
 		return nil, err
@@ -35,7 +36,7 @@ func (h *testServiceHandler) Echo(ctx context.Context, req *connect.Request[test
 	return connect.NewResponse(res), nil
 }
 
-func (h *testServiceHandler) Fail(ctx context.Context, req *connect.Request[testservice.FailRequest]) (*connect.Response[testservice.FailResponse], error) {
+func (h *testServiceServiceHandler) Fail(ctx context.Context, req *connect.Request[testservice.FailRequest]) (*connect.Response[testservice.FailResponse], error) {
 	res, err := h.svc.Fail(ctx, req.Msg)
 	if err != nil {
 		return nil, err
@@ -44,25 +45,25 @@ func (h *testServiceHandler) Fail(ctx context.Context, req *connect.Request[test
 	return connect.NewResponse(res), nil
 }
 
-// NewTestServiceClient constructs a client for the elephantine.testservice.v1.Test service that
-// implements the plain testservice.Test interface, so that it is a drop-in for the Twirp clients.
-// The options are the ones NewTestClient takes.
+// NewTestServiceServiceClient constructs a client for the elephantine.testservice.v1.TestService
+// service that implements the plain testservice.TestService interface, so that it is a drop-in for
+// the Twirp clients. The options are the ones NewTestServiceClient takes.
 //
 // The base URL is the base URL of the Connect or gRPC server, for example
 // https://repository.api.tt.se. Errors are returned as the *connect.Error values the Connect client
 // produces.
-func NewTestServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) testservice.Test {
-	return &testServiceClient{
-		client: NewTestClient(httpClient, baseURL, opts...),
+func NewTestServiceServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) testservice.TestService {
+	return &testServiceServiceClient{
+		client: NewTestServiceClient(httpClient, baseURL, opts...),
 	}
 }
 
-// testServiceClient implements testservice.Test on top of a TestClient.
-type testServiceClient struct {
-	client TestClient
+// testServiceServiceClient implements testservice.TestService on top of a TestServiceClient.
+type testServiceServiceClient struct {
+	client TestServiceClient
 }
 
-func (c *testServiceClient) Echo(ctx context.Context, req *testservice.EchoRequest) (*testservice.EchoResponse, error) {
+func (c *testServiceServiceClient) Echo(ctx context.Context, req *testservice.EchoRequest) (*testservice.EchoResponse, error) {
 	res, err := c.client.Echo(ctx, connect.NewRequest(req))
 	if err != nil {
 		return nil, err
@@ -71,7 +72,7 @@ func (c *testServiceClient) Echo(ctx context.Context, req *testservice.EchoReque
 	return res.Msg, nil
 }
 
-func (c *testServiceClient) Fail(ctx context.Context, req *testservice.FailRequest) (*testservice.FailResponse, error) {
+func (c *testServiceServiceClient) Fail(ctx context.Context, req *testservice.FailRequest) (*testservice.FailResponse, error) {
 	res, err := c.client.Fail(ctx, connect.NewRequest(req))
 	if err != nil {
 		return nil, err

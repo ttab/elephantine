@@ -48,6 +48,16 @@ func WithMetricsStaticTestLatency(latency time.Duration) MetricsOption {
 // collectors are shared with the hooks, so a service serving both protocols
 // registers each metric once and its dashboards keep working.
 //
+// A streaming call is observed in rpc_stream_duration_seconds and counted in
+// rpc_streams_active instead of being timed in rpc_duration_seconds, which is
+// unary only: a stream's "duration" is the lifetime of a subscription, and
+// rpc_duration_seconds' top bucket is about thirty seconds, so a single
+// long-lived stream would land in +Inf and drag every quantile computed over
+// the service with it. It is counted in rpc_requests_total when the stream
+// opens and in rpc_responses_total and rpc_protocol_responses_total when it
+// closes, with the code of whatever ended it. There is deliberately no
+// per-message counter.
+//
 // The status label is the HTTP status Connect answers the code with, which for
 // canceled, deadline_exceeded and failed_precondition is not the status Twirp
 // answered with. It is 200 for a gRPC or a gRPC-Web response, since those
@@ -85,7 +95,7 @@ func MetricsInterceptor(
 
 	observe := func(
 		ctx context.Context, procedure string, protocol string,
-		start time.Time, err error,
+		start time.Time, streaming bool, err error,
 	) {
 		var (
 			service, method = splitProcedure(procedure)
@@ -98,8 +108,16 @@ func MetricsInterceptor(
 			duration = opt.testLatency.Seconds()
 		}
 
-		metrics.Duration.WithLabelValues(
-			service, method, customer).Observe(duration)
+		// A stream's duration is the lifetime of a subscription, which
+		// in rpc_duration_seconds would be an observation in the +Inf
+		// bucket and a quantile that means nothing.
+		if streaming {
+			metrics.StreamDuration.WithLabelValues(
+				service, method, customer).Observe(duration)
+		} else {
+			metrics.Duration.WithLabelValues(
+				service, method, customer).Observe(duration)
+		}
 
 		metrics.Responses.WithLabelValues(
 			service, method,
@@ -130,7 +148,7 @@ func MetricsInterceptor(
 
 				observe(ctx, req.Spec().Procedure,
 					ProtocolLabel(req.Peer().Protocol),
-					start, err)
+					start, false, err)
 
 				return res, err
 			}
@@ -141,15 +159,25 @@ func MetricsInterceptor(
 			return func(
 				ctx context.Context, conn connect.StreamingHandlerConn,
 			) error {
-				start := time.Now()
+				var (
+					procedure       = conn.Spec().Procedure
+					service, method = splitProcedure(procedure)
+					start           = time.Now()
+				)
 
-				countRequest(ctx, conn.Spec().Procedure)
+				countRequest(ctx, procedure)
+
+				active := metrics.StreamsActive.WithLabelValues(
+					service, method)
+
+				active.Inc()
+				defer active.Dec()
 
 				err := next(ctx, conn)
 
-				observe(ctx, conn.Spec().Procedure,
+				observe(ctx, procedure,
 					ProtocolLabel(conn.Peer().Protocol),
-					start, err)
+					start, true, err)
 
 				return err
 			}
