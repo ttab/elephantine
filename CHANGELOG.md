@@ -93,6 +93,15 @@ Changes:
   reaches a caller through the ingress, how to write a streaming handler, and
   the size, shutdown and metric behaviour above. `docs/metrics.md` documents
   the two new series.
+- `IdleConnections` now sets `MaxIdleConnsPerHost` as its name and second
+  argument say. It had been assigning that argument to `MaxConnsPerHost`, so
+  the per-host idle pool stayed at the default of six and the argument became
+  a hard cap on open connections per host instead. No service in the fleet
+  calls the option, so nothing changes at runtime; a service that adopts it
+  gets the documented behaviour.
+- `NewHTTPClientInstrumentation` is the correctly spelled constructor for the
+  HTTP client metrics. `NewHTTPClientIntrumentation` remains as a deprecated
+  alias, so existing callers compile unchanged and can migrate at leisure.
 
 ## [v0.29.1] - 2026-09-07
 
