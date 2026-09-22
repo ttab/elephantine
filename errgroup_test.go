@@ -184,17 +184,21 @@ func TestErrGroupRestartMetric(t *testing.T) {
 
 	var runs int
 
-	grp.GoWithRetries("flaky", 5,
-		elephantine.StaticBackoff(time.Millisecond), time.Minute,
-		func(_ context.Context) error {
-			runs++
+	// The curve is the pacer's own, so the test paces itself by
+	// configuring it rather than by supplying a backoff function.
+	grp.GoWithRetries("flaky", elephantine.RetryOptions{
+		BackoffFloor: time.Millisecond,
+		BackoffCeil:  2 * time.Millisecond,
+		MinRuntime:   time.Millisecond,
+	}, func(_ context.Context) error {
+		runs++
 
-			if runs < 3 {
-				return errors.New("transient failure")
-			}
+		if runs < 3 {
+			return errors.New("transient failure")
+		}
 
-			return nil
-		})
+		return nil
+	})
 
 	err := grp.Wait()
 	if err != nil {
@@ -210,5 +214,50 @@ task_restarts_total{task="flaky"} 2
 	err = testutil.GatherAndCompare(reg, expected, "task_restarts_total")
 	if err != nil {
 		t.Fatalf("unexpected metric state: %v", err)
+	}
+}
+
+// TestErrGroupRetriesGiveUpAfterBudget verifies that a task that goes on
+// failing fails the group once it has been failing for GiveUpAfter, rather
+// than after a number of attempts.
+func TestErrGroupRetriesGiveUpAfterBudget(t *testing.T) {
+	grp := elephantine.NewErrGroup(context.Background(), discardLogger(),
+		elephantine.WithErrGroupMetricsRegisterer(prometheus.NewRegistry()))
+
+	errFail := errors.New("dependency down")
+
+	var runs int
+
+	started := time.Now()
+
+	grp.GoWithRetries("broken", elephantine.RetryOptions{
+		GiveUpAfter:  50 * time.Millisecond,
+		BackoffFloor: time.Millisecond,
+		BackoffCeil:  5 * time.Millisecond,
+		MinRuntime:   time.Millisecond,
+	}, func(_ context.Context) error {
+		runs++
+
+		return errFail
+	})
+
+	err := grp.Wait()
+	if err == nil {
+		t.Fatal("expected the failing task to fail the group")
+	}
+
+	if !errors.Is(err, errFail) {
+		t.Fatalf("expected the last failure to be wrapped, got: %v", err)
+	}
+
+	// The budget is wall-clock time, so the task must have been restarted
+	// for at least as long as it was given.
+	if elapsed := time.Since(started); elapsed < 50*time.Millisecond {
+		t.Fatalf("expected the task to keep retrying for at least 50ms, gave up after %s",
+			elapsed)
+	}
+
+	if runs < 2 {
+		t.Fatalf("expected the task to be restarted, it ran %d times", runs)
 	}
 }

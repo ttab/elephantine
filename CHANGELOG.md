@@ -6,33 +6,32 @@ detail.
 
 ## [v0.30.0] - Unreleased
 
+**Breaking (task and job supervision):** `ErrGroup.GoWithRetries` takes a
+`RetryOptions` struct, and the failure budget on it and on `joblock.Options` is
+a duration — `GiveUpAfter`, how long the task may go on failing — where
+`maxRetries` and `MaxConsecutiveFailures` counted attempts. The backoff curve
+is the library's own now, so `BackoffFunction` and `StaticBackoff` are removed
+with nothing to replace them, and every restart is padded out to
+`RetryOptions.MinRuntime`, ten seconds by default. **A budget carried across as
+a count means a different amount of time than the count did.** Every call site
+has to be touched; the
+[v0.30 migration document](docs/migrations/v0.30.md#errgroupgowithretries-and-joblockoptions)
+has the old-to-new table, worked examples, and what the old counts were worth
+under the curve. Zero still means "restart forever" on both APIs.
+
 **Behaviour change (request body limits on Connect mounts):** `APIServer` no
-longer wraps the request body of a Connect subtree in an `http.MaxBytesReader`.
-That reader counts the bytes read over the life of the request, and a client or
-bidirectional stream's request body *is* the stream, so such a stream died once
-its cumulative traffic passed `DefaultMaxBodyBytes` — 8 MiB once, not per
-message. Connect requests are bounded per message instead, by the new
-`ServiceOptions.MaxMessageBytes`, which `HandlerOptions()` emits as
-`connect.WithReadMaxBytes`. It defaults to `DefaultMaxBodyBytes` and a unary
-call is one message, so a unary request is bounded exactly as it was; a zero
-value is that default rather than connect-go's "any size", and a negative value
-asks for no limit. A service that raised `APIServerMaxBodyBytes` for the sake
-of a large Connect request should set `MaxMessageBytes` to the same number,
-since that limit is now what bounds it. The exemption's residual cost is that a
-Connect request body is no longer bounded in total: connect-go reads past an
-over-sized unary message to `io.Discard` so the connection can be reused, and
-with no cumulative limit a caller sending an endless chunked body holds a
-connection and a goroutine rather than being cut off at 8 MiB. Nothing grows
-without bound, and a client stream can hold a connection open by design, so a
-cumulative limit is not the answer — bounding it is the ingress's job.
-**Every non-Connect mount is unchanged**: the Twirp services and anything a
-service hands to `server.Mux` itself keep the stream-level limit, and the cheap
-413 for a request that declares an oversized `Content-Length` stays on every
-path. Responses are not bounded by any of this: the new
-`ServiceOptions.MaxSendMessageBytes` emits `connect.WithSendMaxBytes` for a
-service that wants a bound on what it answers with, and is off unless set,
-since nothing has bounded an elephant service's responses before and the Twirp
-mount of the same service still does not.
+longer wraps the request body of a Connect subtree in an `http.MaxBytesReader`
+— it counted bytes over the life of the request, which killed a client or
+bidirectional stream once its cumulative traffic passed `DefaultMaxBodyBytes`.
+A Connect request is bounded per message instead, by the new
+`ServiceOptions.MaxMessageBytes`, which defaults to `DefaultMaxBodyBytes`, so a
+unary call is bounded exactly as it was. **A service that raised
+`APIServerMaxBodyBytes` for the sake of a large Connect request must set
+`MaxMessageBytes` to the same number** — see
+[request body limits on Connect mounts](docs/migrations/v0.30.md#request-body-limits-on-connect-mounts).
+Non-Connect mounts are unchanged. Responses are bounded only where a service
+asks, with the new `ServiceOptions.MaxSendMessageBytes`;
+[message size limits](docs/connect.md#message-size-limits) has the reasoning.
 
 **Behaviour change (RPC metrics):** `rpc_duration_seconds` is unary only. A
 stream's "duration" is the lifetime of a subscription, and the histogram's top
@@ -50,6 +49,20 @@ deliberately no per-message counter.
 
 Changes:
 
+- `ErrGroup.GoWithRetries` and `joblock.Run` share one restart pacer:
+  exponential backoff with equal jitter from `DefaultBackoffFloor` to
+  `DefaultBackoffCeil`, restarts padded out to `DefaultMinRuntime`, and a
+  failure streak cleared by a run that lasts `DefaultHealthyRuntime`. All four
+  defaults are exported and every one is overridable on `RetryOptions` and
+  `joblock.Options`. A `BackoffFloor` below `MinRuntime` does nothing, so a
+  faster first retry means lowering both.
+- The old retry reset measured the wait plus the runtime rather than the
+  runtime of the run that failed, since `GoWithRetries` stamped its clock
+  before the backoff sleep. That was harmless under a static backoff, but it is
+  why the library could not ship an exponential curve: a wait longer than
+  `resetAfter` reset the counter on the strength of its own sleep, making
+  `maxRetries` unreachable. The duration budget has no such interaction — the
+  waits count towards it, and only a healthy run clears it.
 - `rpc.DrainInterceptor(drain <-chan struct{})` ends streaming handlers when
   the server starts shutting down: it derives their context with a cancellation
   cause of `rpc.ErrDraining` and answers the stream `unavailable`, so a client
@@ -78,6 +91,15 @@ Changes:
   `ListenAndServe`. The default is unchanged and is exported as
   `DefaultShutdownTimeout`; a service whose streams flush before they close
   needs more than it.
+- `IdleConnections` now sets `MaxIdleConnsPerHost` as its name and second
+  argument say. It had been assigning that argument to `MaxConnsPerHost`, so
+  the per-host idle pool stayed at the default of six and the argument became
+  a hard cap on open connections per host instead. No service in the fleet
+  calls the option, so nothing changes at runtime; a service that adopts it
+  gets the documented behaviour.
+- `NewHTTPClientInstrumentation` is the correctly spelled constructor for the
+  HTTP client metrics. `NewHTTPClientIntrumentation` remains as a deprecated
+  alias, so existing callers compile unchanged and can migrate at leisure.
 - The request-scoped log metadata map is guarded by a mutex, and
   `GetLogMetadata` returns a copy. A streaming handler that runs a producer
   goroutine alongside the one writing to the stream is the normal shape, and
@@ -92,16 +114,13 @@ Changes:
 - `docs/connect.md` now covers the native Connect shape and streaming: what
   reaches a caller through the ingress, how to write a streaming handler, and
   the size, shutdown and metric behaviour above. `docs/metrics.md` documents
-  the two new series.
-- `IdleConnections` now sets `MaxIdleConnsPerHost` as its name and second
-  argument say. It had been assigning that argument to `MaxConnsPerHost`, so
-  the per-host idle pool stayed at the default of six and the argument became
-  a hard cap on open connections per host instead. No service in the fleet
-  calls the option, so nothing changes at runtime; a service that adopts it
-  gets the documented behaviour.
-- `NewHTTPClientInstrumentation` is the correctly spelled constructor for the
-  HTTP client metrics. `NewHTTPClientIntrumentation` remains as a deprecated
-  alias, so existing callers compile unchanged and can migrate at leisure.
+  the two new series, and `docs/joblock-restart-semantics.md` the duration
+  budget.
+- The [v0.30 migration document](docs/migrations/v0.30.md) covers the
+  supervision APIs old to new, [how to choose a
+  `GiveUpAfter`](docs/migrations/v0.30.md#picking-giveupafter), and the one
+  change a service with a raised body limit has to make. The package doc points
+  at it, so `go doc elephantine` finds it.
 
 ## [v0.29.1] - 2026-09-07
 

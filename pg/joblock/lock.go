@@ -59,17 +59,36 @@ type Options struct {
 	// MetricsRegisterer is used to register the job lock metrics.
 	// Defaults to prometheus.DefaultRegisterer.
 	MetricsRegisterer prometheus.Registerer
-	// MaxConsecutiveFailures is the number of consecutive failed runs
-	// Run tolerates before it gives up and returns an error
-	// instead of restarting the function. Zero, the default, means that
-	// it keeps restarting forever. Only used by Run.
-	MaxConsecutiveFailures int
+	// GiveUpAfter is how long the function is allowed to go on failing
+	// before Run gives up and returns an error instead of restarting it.
+	// The clock starts at the first failure of a streak, runs across the
+	// backoff waits, and is cleared by a run that reaches HealthyRuntime.
+	// Zero, the default, means that it keeps restarting forever. Replaces
+	// MaxConsecutiveFailures, which counted failures instead of timing
+	// them. Only used by Run.
+	GiveUpAfter time.Duration
 	// HealthyRuntime is how long a run must last to count as a success
-	// for the purposes of MaxConsecutiveFailures. A run that returns
-	// earlier than this counts as a failure regardless of how much work
-	// it did, so that failures that accrue slowly still reach the limit.
-	// Defaults to five minutes. Only used by Run.
+	// and clear the failure budget. A run that returns earlier than this
+	// counts as a failure regardless of how much work it did, so that
+	// failures that accrue slowly still reach the budget. Defaults to
+	// elephantine.DefaultHealthyRuntime. Only used by Run.
 	HealthyRuntime time.Duration
+	// BackoffFloor is the delay before the first restart after a failure.
+	// Defaults to elephantine.DefaultBackoffFloor. Setting it below
+	// MinRuntime does nothing, since the restart is padded out to
+	// MinRuntime either way — a faster first retry means lowering both.
+	// Only used by Run.
+	BackoffFloor time.Duration
+	// BackoffCeil is the longest the backoff grows to. Defaults to
+	// elephantine.DefaultBackoffCeil. Only used by Run.
+	BackoffCeil time.Duration
+	// MinRuntime is the minimum interval between two starts of the
+	// function. A run that returns faster is padded out to it, and a run
+	// that reaches it resets the backoff. Defaults to
+	// elephantine.DefaultMinRuntime, which dominates the first restarts
+	// of a function that fails immediately: the backoff only becomes
+	// visible once it has doubled past this. Only used by Run.
+	MinRuntime time.Duration
 }
 
 // Lock helps separate processes coordinate who should be performing a
