@@ -11,7 +11,7 @@ err := joblock.Run(ctx, db, logger,
 	"indexer",  // lock name, shared by every instance and used as a metric label
 	joblock.Options{
 		MetricsRegisterer: reg,
-		GiveUpAfter:       5 * time.Minute,
+		GiveUpAfter:       30 * time.Minute,
 	},
 	func(ctx context.Context) error {
 		// Blocks until ctx is cancelled.
@@ -68,18 +68,28 @@ Pacing makes a persistently failing job survivable, not healthy. A job paced
 at the ceiling can keep failing indefinitely with only a metric to show it, so
 the loop can be bounded:
 
-- `joblock.Options.GiveUpAfter` — how long the function is allowed to go on
+- `joblock.Options.GiveUpAfter` — how much time the function may spend
   failing. When the budget runs out `joblock.Run` returns an error wrapping
   the last failure instead of restarting. Zero, the default, restarts forever.
 - `joblock.Options.HealthyRuntime` — how long a run must last to count as a
   success, five minutes by default.
 
-**The budget is wall-clock time since the first failure of the current
-streak**, including the waits between restarts — the question it answers is
-how long the job has been broken, not how much of that time it spent
-executing. It is a duration rather than a count of failures because the count
-could not be read without doing the exponential sum backwards at the call
-site.
+**The budget is the time the job has spent broken**: the failing runs and the
+waits between them, starting at the first failure of the streak. It is a
+duration rather than a count of failures because the count could not be read
+without doing the exponential sum backwards at the call site. Time the job
+spent doing something other than failing is not spent from it — a run that
+returned nil too early to be healthy, or one ended by the loss of the lock,
+leaves the streak open but costs it nothing.
+
+**`GiveUpAfter` must be longer than `HealthyRuntime`, and wants to be several
+times it.** Nothing shorter than a healthy run clears the budget, so a budget
+of about one healthy run degenerates into "give up on the second failure more
+than `GiveUpAfter` apart", however well the job ran in between. `joblock.Run`
+returns an error for a shorter one rather than accepting a limit that cannot
+mean what it reads. Pick `HealthyRuntime` first — how long the job has to keep
+running before you would call it working — and then a budget that is a
+handful of those.
 
 The definition of a success is deliberately not "returned nil" but "ran for at
 least `HealthyRuntime`". A function that blocks as the contract asks reaches
@@ -95,10 +105,13 @@ Two details keep the budget honest:
   the time a follower spends waiting for its turn is not credited as healthy
   runtime. A replica that polls for twenty minutes and then fails instantly
   would otherwise look healthy on every cycle.
-- **Losing the lock is not a failure.** Lock loss cancels the function's
-  context, so it surfaces as `context.Canceled`, which is not counted. A lock
-  that ping-pongs between replicas therefore cannot exhaust the budget and
-  take the service down.
+- **Losing the lock is not a failure, and does not spend the budget.** Lock
+  loss cancels the function's context, so it surfaces as `context.Canceled`,
+  which is not counted — and neither is the time that run held the lock for,
+  since the job was not failing while it ran. A lock that ping-pongs between
+  replicas therefore cannot exhaust the budget and take the service down,
+  which it could if the budget were wall clock: the length of a lock hold is
+  not the caller's to choose, so no `GiveUpAfter` would be safe.
 
 The returned error is the caller's to handle, which in practice means the
 `elephantine.ErrGroup` the worker runs under: a `Go` task restarts with the

@@ -33,12 +33,16 @@ import (
 // take over.
 //
 // Restarts are not necessarily unlimited. If Options.GiveUpAfter is set, Run
-// gives up and returns an error once the function has been failing for that
-// long without any run lasting Options.HealthyRuntime (five minutes by
-// default). The clock starts at the first failure and includes the waits
-// between restarts, so a job that fails fast reaches the budget in about the
-// time it names, rather than accruing failures forever. A run cut short by
-// the loss of the lock is not a failure.
+// gives up and returns an error once the function has spent that long failing
+// without any run lasting Options.HealthyRuntime (five minutes by default).
+// The budget covers the failing runs and the waits between them, so a job that
+// fails fast reaches it in about the time it names, rather than accruing
+// failures forever. A run cut short by the loss of the lock is not a failure,
+// and the time it held the lock for is not spent from the budget either — a
+// lock that ping-pongs between replicas cannot take the service down.
+//
+// A GiveUpAfter that is not longer than HealthyRuntime is rejected, since
+// only a run of that length clears the budget.
 func Run(
 	ctx context.Context,
 	db *pgxpool.Pool,
@@ -70,7 +74,7 @@ func Run(
 	// A run cut short by the loss of the lock surfaces as a cancellation,
 	// and must not count as a failure: a lock that ping-pongs between
 	// replicas would otherwise take the service down with it.
-	restartPacer := pacer.New(pacer.Options{
+	restartPacer, err := pacer.New(pacer.Options{
 		GiveUpAfter:        options.GiveUpAfter,
 		HealthyRuntime:     options.HealthyRuntime,
 		BackoffFloor:       options.BackoffFloor,
@@ -78,6 +82,9 @@ func Run(
 		MinRuntime:         options.MinRuntime,
 		IgnoreCancellation: true,
 	})
+	if err != nil {
+		return fmt.Errorf("invalid restart options: %w", err)
+	}
 
 	for {
 		lock, err := New(db, logger, lockName, options)

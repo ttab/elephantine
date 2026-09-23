@@ -9,36 +9,20 @@ import (
 	"github.com/ttab/elephantine/internal/pacer"
 )
 
-// testClock is a manually advanced clock, so that the failure budget can be
-// exhausted without a test waiting for it.
-type testClock struct {
-	now time.Time
-}
-
-func (c *testClock) Now() time.Time {
-	return c.now
-}
-
-func (c *testClock) Advance(d time.Duration) {
-	c.now = c.now.Add(d)
-}
-
-// newTestPacer creates a pacer on a manually advanced clock. The clock is not
-// advanced by the pacer itself, so a test that doesn't touch it exercises a
-// budget that never elapses.
-func newTestPacer(t *testing.T, opts pacer.Options) (*pacer.Pacer, *testClock) {
+// newPacer creates a pacer, failing the test if the options are rejected.
+func newPacer(t *testing.T, opts pacer.Options) *pacer.Pacer {
 	t.Helper()
 
-	clock := testClock{now: time.Now()}
+	p, err := pacer.New(opts)
+	if err != nil {
+		t.Fatalf("create pacer: %v", err)
+	}
 
-	p := pacer.New(opts)
-	p.SetClock(clock.Now)
-
-	return p, &clock
+	return p
 }
 
 func TestPacerPadsFastReturns(t *testing.T) {
-	p, _ := newTestPacer(t, pacer.Options{})
+	p := newPacer(t, pacer.Options{})
 
 	// A fast nil return is padded out to the minimum runtime.
 	wait := pace(t, p, time.Millisecond, nil)
@@ -50,7 +34,7 @@ func TestPacerPadsFastReturns(t *testing.T) {
 			pacer.DefaultMinRuntime, wait)
 	}
 
-	// A healthy long run is restarted immediately.
+	// A run past the minimum runtime is restarted immediately.
 	wait = pace(t, p, pacer.DefaultMinRuntime+time.Second, nil)
 	if wait != 0 {
 		t.Fatalf("expected no wait after a long run, got %s", wait)
@@ -58,7 +42,7 @@ func TestPacerPadsFastReturns(t *testing.T) {
 }
 
 func TestPacerBacksOffOnErrors(t *testing.T) {
-	p, _ := newTestPacer(t, pacer.Options{})
+	p := newPacer(t, pacer.Options{})
 
 	errFail := errors.New("dependency down")
 
@@ -88,12 +72,50 @@ func TestPacerBacksOffOnErrors(t *testing.T) {
 		t.Fatalf("expected backoff to exceed %s after repeated failures, got %s",
 			pacer.DefaultMinRuntime, previous)
 	}
+}
 
-	// A healthy run resets the backoff to the floor.
+// TestPacerResetsBackoffOnMinRuntime verifies that the backoff resets after a
+// run that only reached the minimum runtime — it paces a task that is failing
+// right now, and does not wait for a healthy run to judge that.
+func TestPacerResetsBackoffOnMinRuntime(t *testing.T) {
+	errFail := errors.New("dependency down")
+
+	p := newPacer(t, pacer.Options{})
+
+	for range 10 {
+		pace(t, p, time.Millisecond, errFail)
+	}
+
 	wait := pace(t, p, pacer.DefaultMinRuntime+time.Second, errFail)
 	if wait < pacer.DefaultBackoffFloor/2 || wait >= pacer.DefaultBackoffFloor {
 		t.Fatalf("expected wait in [%s, %s) after reset, got %s",
 			pacer.DefaultBackoffFloor/2, pacer.DefaultBackoffFloor, wait)
+	}
+}
+
+// TestPacerResetsBackoffOnHealthyRun verifies the same for a run that lasted
+// the healthy runtime, which additionally clears the failure budget.
+func TestPacerResetsBackoffOnHealthyRun(t *testing.T) {
+	errFail := errors.New("dependency down")
+
+	p := newPacer(t, pacer.Options{})
+
+	for range 10 {
+		pace(t, p, time.Millisecond, errFail)
+	}
+
+	wait := pace(t, p, pacer.DefaultHealthyRuntime, errFail)
+	if wait < pacer.DefaultBackoffFloor/2 || wait >= pacer.DefaultBackoffFloor {
+		t.Fatalf("expected wait in [%s, %s) after a healthy run, got %s",
+			pacer.DefaultBackoffFloor/2, pacer.DefaultBackoffFloor, wait)
+	}
+
+	// The healthy run cleared the streak, and the error that ended it
+	// opened a new one — it is the first failure of that streak, not a
+	// restart with no failures behind it.
+	if p.Failures() != 1 {
+		t.Fatalf("expected the failure that ended the healthy run to count, got %d",
+			p.Failures())
 	}
 }
 
@@ -102,7 +124,7 @@ func TestPacerJitterBounds(t *testing.T) {
 
 	// Drive the backoff to the ceiling, then check that jittered delays
 	// stay within [ceil/2, ceil).
-	p, _ := newTestPacer(t, pacer.Options{})
+	p := newPacer(t, pacer.Options{})
 
 	for range 10 {
 		pace(t, p, time.Millisecond, errFail)
@@ -124,7 +146,7 @@ func TestPacerJitterBounds(t *testing.T) {
 func TestPacerRespectsConfiguredCurve(t *testing.T) {
 	errFail := errors.New("dependency down")
 
-	p, _ := newTestPacer(t, pacer.Options{
+	p := newPacer(t, pacer.Options{
 		BackoffFloor: 2 * time.Millisecond,
 		BackoffCeil:  8 * time.Millisecond,
 		MinRuntime:   time.Millisecond,
@@ -149,27 +171,33 @@ func TestPacerRespectsConfiguredCurve(t *testing.T) {
 	}
 }
 
-// TestPacerGivesUpAfterBudget verifies that the failure budget is wall-clock
-// time since the first failure of the streak, not a number of attempts.
+// TestPacerGivesUpAfterBudget verifies that the budget is the time spent
+// failing — the failing runs and the waits between them — rather than a
+// number of attempts.
 func TestPacerGivesUpAfterBudget(t *testing.T) {
 	errFail := errors.New("dependency down")
 
-	p, clock := newTestPacer(t, pacer.Options{GiveUpAfter: 5 * time.Minute})
+	// Runs that fail after a minute, restarted immediately, so the budget
+	// is spent a minute at a time.
+	p := newPacer(t, pacer.Options{
+		GiveUpAfter:    10 * time.Minute,
+		HealthyRuntime: 5 * time.Minute,
+		MinRuntime:     time.Second,
+	})
 
-	// However many times it fails, it keeps restarting while the budget
-	// lasts.
-	for i := range 100 {
-		_, giveUp := p.Pace(time.Second, errFail)
+	for i := range 10 {
+		_, giveUp := p.Pace(time.Minute, errFail)
 		if giveUp != nil {
 			t.Fatalf("failure %d: unexpected give up: %v", i+1, giveUp)
 		}
 	}
 
-	clock.Advance(5 * time.Minute)
-
-	_, giveUp := p.Pace(time.Second, errFail)
+	// The eleventh failure is the one that carries the streak past ten
+	// minutes: the clock starts at the first failure, not at the start of
+	// the run that failed first.
+	_, giveUp := p.Pace(time.Minute, errFail)
 	if giveUp == nil {
-		t.Fatal("expected the pacer to give up once the budget had elapsed")
+		t.Fatal("expected the pacer to give up once the budget was spent")
 	}
 
 	if !errors.Is(giveUp, errFail) {
@@ -177,22 +205,33 @@ func TestPacerGivesUpAfterBudget(t *testing.T) {
 	}
 }
 
-// TestPacerBudgetCountsWaits verifies that a budget can elapse across two
-// failures, as the backoff waits between them count towards it.
+// TestPacerBudgetCountsWaits verifies that the waits between restarts are
+// spent from the budget, not only the time the function was running.
 func TestPacerBudgetCountsWaits(t *testing.T) {
 	errFail := errors.New("dependency down")
 
-	p, clock := newTestPacer(t, pacer.Options{GiveUpAfter: time.Minute})
+	// A backoff that stays under the minimum runtime makes every wait the
+	// ten second pad, so the budget is spent ten seconds per restart.
+	p := newPacer(t, pacer.Options{
+		GiveUpAfter:    90 * time.Second,
+		HealthyRuntime: time.Minute,
+		BackoffFloor:   time.Second,
+		BackoffCeil:    time.Second,
+		MinRuntime:     10 * time.Second,
+	})
 
-	_, giveUp := p.Pace(time.Second, errFail)
-	if giveUp != nil {
-		t.Fatalf("unexpected give up on the first failure: %v", giveUp)
+	// A task that fails instantly spends nothing but those waits: the
+	// first failure opens the streak, and the nine after it carry it to
+	// ninety seconds.
+	for i := range 9 {
+		_, giveUp := p.Pace(0, errFail)
+		if giveUp != nil {
+			t.Fatalf("failure %d: unexpected give up: %v", i+1, giveUp)
+		}
 	}
 
-	clock.Advance(time.Minute)
-
-	if _, giveUp := p.Pace(time.Second, errFail); giveUp == nil {
-		t.Fatal("expected the pacer to give up on the second failure")
+	if _, giveUp := p.Pace(0, errFail); giveUp == nil {
+		t.Fatal("expected the waits alone to spend the budget")
 	}
 }
 
@@ -204,43 +243,44 @@ func TestPacerOnlyResetsBudgetOnHealthyRuns(t *testing.T) {
 
 	healthy := 5 * time.Minute
 
-	p, clock := newTestPacer(t, pacer.Options{
-		GiveUpAfter:    time.Hour,
+	p := newPacer(t, pacer.Options{
+		GiveUpAfter:    10 * time.Minute,
 		HealthyRuntime: healthy,
-	})
-
-	_, giveUp := p.Pace(healthy-time.Second, errFail)
-	if giveUp != nil {
-		t.Fatalf("unexpected give up: %v", giveUp)
-	}
-
-	clock.Advance(time.Hour)
-
-	// A nil return that was too short to be healthy neither counts as a
-	// failure nor clears the streak before it.
-	_, giveUp = p.Pace(time.Second, nil)
-	if giveUp != nil {
-		t.Fatalf("unexpected give up after a nil return: %v", giveUp)
-	}
-
-	if _, giveUp := p.Pace(time.Second, errFail); giveUp == nil {
-		t.Fatal("expected the pacer to give up once the budget had elapsed")
-	}
-
-	// A run that lasted at least the healthy runtime clears the streak,
-	// even though it ended in an error.
-	p, clock = newTestPacer(t, pacer.Options{
-		GiveUpAfter:    time.Hour,
-		HealthyRuntime: healthy,
+		MinRuntime:     time.Second,
 	})
 
 	for i := range 10 {
-		_, giveUp := p.Pace(time.Second, errFail)
+		_, giveUp := p.Pace(time.Minute, errFail)
+		if giveUp != nil {
+			t.Fatalf("failure %d: unexpected give up: %v", i+1, giveUp)
+		}
+
+		// A nil return that was too short to be healthy neither counts
+		// as a failure nor clears the streak before it.
+		_, giveUp = p.Pace(time.Second, nil)
+		if giveUp != nil {
+			t.Fatalf("failure %d: unexpected give up after a nil return: %v",
+				i+1, giveUp)
+		}
+	}
+
+	if _, giveUp := p.Pace(time.Minute, errFail); giveUp == nil {
+		t.Fatal("expected the pacer to give up once the budget was spent")
+	}
+
+	// A run that lasted at least the healthy runtime clears the streak,
+	// even though it ended in an error, so the budget never runs out.
+	p = newPacer(t, pacer.Options{
+		GiveUpAfter:    10 * time.Minute,
+		HealthyRuntime: healthy,
+		MinRuntime:     time.Second,
+	})
+
+	for i := range 100 {
+		_, giveUp := p.Pace(time.Minute, errFail)
 		if giveUp != nil {
 			t.Fatalf("iteration %d: unexpected give up: %v", i, giveUp)
 		}
-
-		clock.Advance(time.Hour)
 
 		_, giveUp = p.Pace(healthy, errFail)
 		if giveUp != nil {
@@ -254,32 +294,63 @@ func TestPacerOnlyResetsBudgetOnHealthyRuns(t *testing.T) {
 // lock was lost doesn't count towards the failure budget, and that a pacer
 // without the exemption does count it.
 func TestPacerIgnoresCancellation(t *testing.T) {
-	p, clock := newTestPacer(t, pacer.Options{
-		GiveUpAfter:        time.Minute,
+	p := newPacer(t, pacer.Options{
+		GiveUpAfter:        10 * time.Minute,
+		HealthyRuntime:     5 * time.Minute,
+		MinRuntime:         time.Second,
 		IgnoreCancellation: true,
 	})
 
-	for i := range 10 {
-		clock.Advance(time.Hour)
-
-		_, giveUp := p.Pace(time.Second, context.Canceled)
+	for i := range 100 {
+		_, giveUp := p.Pace(time.Minute, context.Canceled)
 		if giveUp != nil {
 			t.Fatalf("iteration %d: unexpected give up: %v", i, giveUp)
 		}
 	}
 
 	// Without the exemption a cancellation is an ordinary failure.
-	p, clock = newTestPacer(t, pacer.Options{GiveUpAfter: time.Minute})
+	p = newPacer(t, pacer.Options{
+		GiveUpAfter:    10 * time.Minute,
+		HealthyRuntime: 5 * time.Minute,
+		MinRuntime:     time.Second,
+	})
 
-	_, giveUp := p.Pace(time.Second, context.DeadlineExceeded)
-	if giveUp != nil {
-		t.Fatalf("unexpected give up on the first failure: %v", giveUp)
+	for range 10 {
+		pace(t, p, time.Minute, context.DeadlineExceeded)
 	}
 
-	clock.Advance(time.Minute)
-
-	if _, giveUp := p.Pace(time.Second, context.DeadlineExceeded); giveUp == nil {
+	if _, giveUp := p.Pace(time.Minute, context.DeadlineExceeded); giveUp == nil {
 		t.Fatal("expected a cancellation to count as a failure")
+	}
+}
+
+// TestPacerLockChurnDoesNotSpendBudget is the scenario the budget must
+// survive: one genuine failure, then a long run of lock holds each ended by
+// the loss of the lock, then another genuine failure. Lock churn is not the
+// job being broken, and the lengths of those holds are not the caller's to
+// choose, so no configuration could avoid it if they spent the budget.
+func TestPacerLockChurnDoesNotSpendBudget(t *testing.T) {
+	errFail := errors.New("db hiccup")
+
+	p := newPacer(t, pacer.Options{
+		GiveUpAfter:        20 * time.Minute,
+		HealthyRuntime:     5 * time.Minute,
+		IgnoreCancellation: true,
+	})
+
+	pace(t, p, time.Second, errFail)
+
+	// Seven three-minute holds, each ended by the loss of the lock: too
+	// short to be healthy, and adding up to more than the budget.
+	for i := range 7 {
+		_, giveUp := p.Pace(3*time.Minute, context.Canceled)
+		if giveUp != nil {
+			t.Fatalf("lock loss %d: unexpected give up: %v", i+1, giveUp)
+		}
+	}
+
+	if _, giveUp := p.Pace(time.Second, errFail); giveUp != nil {
+		t.Fatalf("two failures twenty-one minutes apart gave up: %v", giveUp)
 	}
 }
 
@@ -288,15 +359,89 @@ func TestPacerIgnoresCancellation(t *testing.T) {
 func TestPacerUnlimitedByDefault(t *testing.T) {
 	errFail := errors.New("dependency down")
 
-	p, clock := newTestPacer(t, pacer.Options{})
+	p := newPacer(t, pacer.Options{})
 
 	for i := range 1000 {
-		clock.Advance(time.Hour)
-
 		_, giveUp := p.Pace(time.Millisecond, errFail)
 		if giveUp != nil {
 			t.Fatalf("iteration %d: unexpected give up: %v", i, giveUp)
 		}
+	}
+}
+
+// TestPacerRejectsBudgetBelowHealthyRuntime verifies that a budget nothing can
+// clear is refused rather than accepted as a two-strikes rule.
+func TestPacerRejectsBudgetBelowHealthyRuntime(t *testing.T) {
+	cases := []struct {
+		name     string
+		opts     pacer.Options
+		rejected bool
+	}{
+		{
+			name: "budget below the default healthy runtime",
+			opts: pacer.Options{
+				GiveUpAfter: time.Minute,
+			},
+			rejected: true,
+		},
+		{
+			name: "budget equal to the healthy runtime",
+			opts: pacer.Options{
+				GiveUpAfter:    time.Hour,
+				HealthyRuntime: time.Hour,
+			},
+			rejected: true,
+		},
+		{
+			name: "budget above the healthy runtime",
+			opts: pacer.Options{
+				GiveUpAfter:    5 * time.Minute,
+				HealthyRuntime: time.Minute,
+			},
+		},
+		{
+			name: "no budget at all",
+			opts: pacer.Options{
+				HealthyRuntime: time.Hour,
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := pacer.New(c.opts)
+
+			switch {
+			case c.rejected && err == nil:
+				t.Fatal("expected the options to be rejected")
+			case !c.rejected && err != nil:
+				t.Fatalf("expected the options to be accepted, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestPacerClampsNegativeDurations verifies that a negative duration is taken
+// as a mistake rather than a request. A negative healthy runtime would
+// otherwise make every run healthy and silently disable the budget.
+func TestPacerClampsNegativeDurations(t *testing.T) {
+	errFail := errors.New("dependency down")
+
+	p := newPacer(t, pacer.Options{
+		GiveUpAfter:    10 * time.Minute,
+		HealthyRuntime: -time.Hour,
+		MinRuntime:     time.Second,
+	})
+
+	for i := range 10 {
+		_, giveUp := p.Pace(time.Minute, errFail)
+		if giveUp != nil {
+			t.Fatalf("failure %d: unexpected give up: %v", i+1, giveUp)
+		}
+	}
+
+	if _, giveUp := p.Pace(time.Minute, errFail); giveUp == nil {
+		t.Fatal("expected a negative healthy runtime to be replaced by the default")
 	}
 }
 

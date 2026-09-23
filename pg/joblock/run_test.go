@@ -26,7 +26,10 @@ func TestPanickingRunCountsAsFailure(t *testing.T) {
 
 	// IgnoreCancellation is how Run configures the pacer, and a recovered
 	// panic must not be mistaken for the loss of the lock.
-	p := pacer.New(pacer.Options{IgnoreCancellation: true})
+	p, optErr := pacer.New(pacer.Options{IgnoreCancellation: true})
+	if optErr != nil {
+		t.Fatalf("create pacer: %v", optErr)
+	}
 
 	if _, giveUp := p.Pace(time.Second, err); giveUp != nil {
 		t.Fatalf("unexpected give up: %v", giveUp)

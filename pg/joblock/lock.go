@@ -59,19 +59,28 @@ type Options struct {
 	// MetricsRegisterer is used to register the job lock metrics.
 	// Defaults to prometheus.DefaultRegisterer.
 	MetricsRegisterer prometheus.Registerer
-	// GiveUpAfter is how long the function is allowed to go on failing
-	// before Run gives up and returns an error instead of restarting it.
-	// The clock starts at the first failure of a streak, runs across the
-	// backoff waits, and is cleared by a run that reaches HealthyRuntime.
-	// Zero, the default, means that it keeps restarting forever. Replaces
-	// MaxConsecutiveFailures, which counted failures instead of timing
-	// them. Only used by Run.
+	// GiveUpAfter is how much time the function may spend failing before
+	// Run gives up and returns an error instead of restarting it: the
+	// failing runs and the waits between them, starting at the first
+	// failure of a streak and cleared by a run that reaches
+	// HealthyRuntime. Time spent in a run that ended because the lock was
+	// lost is not counted. Zero, the default, means that it keeps
+	// restarting forever. Replaces MaxConsecutiveFailures, which counted
+	// failures instead of timing them. Only used by Run.
+	//
+	// It must be longer than HealthyRuntime, and wants to be several times
+	// it: nothing shorter than a healthy run clears the budget, so a
+	// budget of about one healthy run means giving up on the second
+	// failure however far apart the two are. Run returns an error rather
+	// than accepting a shorter one.
 	GiveUpAfter time.Duration
 	// HealthyRuntime is how long a run must last to count as a success
-	// and clear the failure budget. A run that returns earlier than this
-	// counts as a failure regardless of how much work it did, so that
-	// failures that accrue slowly still reach the budget. Defaults to
-	// elephantine.DefaultHealthyRuntime. Only used by Run.
+	// and clear the failure budget — how long it has to hold the lock and
+	// keep working before you would call the job healthy again. A run that
+	// returns earlier than this counts as a failure regardless of how much
+	// work it did, so that failures that accrue slowly still reach the
+	// budget. Defaults to elephantine.DefaultHealthyRuntime. Only used by
+	// Run.
 	HealthyRuntime time.Duration
 	// BackoffFloor is the delay before the first restart after a failure.
 	// Defaults to elephantine.DefaultBackoffFloor. Setting it below

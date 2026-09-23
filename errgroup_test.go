@@ -231,10 +231,11 @@ func TestErrGroupRetriesGiveUpAfterBudget(t *testing.T) {
 	started := time.Now()
 
 	grp.GoWithRetries("broken", elephantine.RetryOptions{
-		GiveUpAfter:  50 * time.Millisecond,
-		BackoffFloor: time.Millisecond,
-		BackoffCeil:  5 * time.Millisecond,
-		MinRuntime:   time.Millisecond,
+		GiveUpAfter:    50 * time.Millisecond,
+		HealthyRuntime: 10 * time.Millisecond,
+		BackoffFloor:   time.Millisecond,
+		BackoffCeil:    5 * time.Millisecond,
+		MinRuntime:     time.Millisecond,
 	}, func(_ context.Context) error {
 		runs++
 
@@ -250,8 +251,8 @@ func TestErrGroupRetriesGiveUpAfterBudget(t *testing.T) {
 		t.Fatalf("expected the last failure to be wrapped, got: %v", err)
 	}
 
-	// The budget is wall-clock time, so the task must have been restarted
-	// for at least as long as it was given.
+	// The budget is spent in time rather than in attempts, so the task
+	// must have been restarted for at least as long as it was given.
 	if elapsed := time.Since(started); elapsed < 50*time.Millisecond {
 		t.Fatalf("expected the task to keep retrying for at least 50ms, gave up after %s",
 			elapsed)
@@ -259,5 +260,34 @@ func TestErrGroupRetriesGiveUpAfterBudget(t *testing.T) {
 
 	if runs < 2 {
 		t.Fatalf("expected the task to be restarted, it ran %d times", runs)
+	}
+}
+
+// TestErrGroupRetriesRejectBudgetBelowHealthyRuntime verifies that a budget
+// nothing can clear fails the group rather than being accepted as a
+// two-strikes rule. Only a run that reaches HealthyRuntime clears the budget,
+// so a shorter budget cannot mean what it reads.
+func TestErrGroupRetriesRejectBudgetBelowHealthyRuntime(t *testing.T) {
+	grp := elephantine.NewErrGroup(context.Background(), discardLogger(),
+		elephantine.WithErrGroupMetricsRegisterer(prometheus.NewRegistry()))
+
+	var runs int
+
+	grp.GoWithRetries("misconfigured", elephantine.RetryOptions{
+		GiveUpAfter:    time.Minute,
+		HealthyRuntime: time.Hour,
+	}, func(_ context.Context) error {
+		runs++
+
+		return nil
+	})
+
+	err := grp.Wait()
+	if err == nil {
+		t.Fatal("expected the invalid retry options to fail the group")
+	}
+
+	if runs != 0 {
+		t.Fatalf("expected the task never to run, it ran %d times", runs)
 	}
 }

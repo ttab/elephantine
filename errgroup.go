@@ -180,16 +180,25 @@ const (
 // MinRuntime so that a task that fails immediately can't spin. The curve is
 // the pacer's own; there is nothing for a caller to supply.
 type RetryOptions struct {
-	// GiveUpAfter is how long the task is allowed to go on failing before
-	// it gives up and fails the group. The clock starts at the first
-	// failure of a streak, runs across the backoff waits, and is cleared
-	// by a run that reaches HealthyRuntime. Zero, the default, means that
-	// it restarts forever. Replaces the maxRetries argument, which
-	// counted failures instead of timing them.
+	// GiveUpAfter is how much time the task may spend failing before it
+	// gives up and fails the group: the failing runs and the waits between
+	// them, starting at the first failure of the streak and cleared by a
+	// run that reaches HealthyRuntime. Time spent in a run that failed for
+	// neither reason — a nil return too short to be healthy — is not
+	// counted. Zero, the default, means that it restarts forever.
+	// Replaces the maxRetries argument, which counted failures instead of
+	// timing them.
+	//
+	// It must be longer than HealthyRuntime, and wants to be several times
+	// it: nothing shorter than a healthy run clears the budget, so a
+	// budget of about one healthy run means giving up on the second
+	// failure however far apart the two are. A shorter one fails the
+	// group, and fails joblock.Run, rather than being quietly accepted.
 	GiveUpAfter time.Duration
 	// HealthyRuntime is how long a run must last to count as a success
-	// and clear the failure budget. Defaults to DefaultHealthyRuntime.
-	// Replaces the resetAfter argument.
+	// and clear the failure budget — how long it has to keep running
+	// before you would call the task working again. Defaults to
+	// DefaultHealthyRuntime. Replaces the resetAfter argument.
 	HealthyRuntime time.Duration
 	// BackoffFloor is the delay before the first restart after a failure.
 	// Defaults to DefaultBackoffFloor. Setting it below MinRuntime does
@@ -211,12 +220,15 @@ type RetryOptions struct {
 // GoWithRetries runs a task in a retry loop, restarting it after a failure
 // with exponential backoff.
 //
-// The task gives up, failing the group, once it has been failing for longer
-// than RetryOptions.GiveUpAfter. That budget is wall-clock time since the
-// first failure of the current streak, including the time spent waiting
-// between restarts, and only a run that lasts RetryOptions.HealthyRuntime
-// clears it. A task that returns nil is done: the loop returns without
-// restarting it.
+// The task gives up, failing the group, once it has spent
+// RetryOptions.GiveUpAfter failing. That budget is the failing runs and the
+// waits between them, starting at the first failure of the streak, and only a
+// run that lasts RetryOptions.HealthyRuntime clears it. A task that returns
+// nil is done: the loop returns without restarting it.
+//
+// A GiveUpAfter that is not longer than HealthyRuntime fails the group
+// immediately, since only a run of that length clears the budget — see
+// RetryOptions.GiveUpAfter.
 func (eg *ErrGroup) GoWithRetries(
 	task string,
 	opts RetryOptions,
@@ -227,13 +239,16 @@ func (eg *ErrGroup) GoWithRetries(
 		// be detected even for a task's first restart.
 		restarts := eg.restarts.WithLabelValues(task)
 
-		restartPacer := pacer.New(pacer.Options{
+		restartPacer, err := pacer.New(pacer.Options{
 			GiveUpAfter:    opts.GiveUpAfter,
 			HealthyRuntime: opts.HealthyRuntime,
 			BackoffFloor:   opts.BackoffFloor,
 			BackoffCeil:    opts.BackoffCeil,
 			MinRuntime:     opts.MinRuntime,
 		})
+		if err != nil {
+			return fmt.Errorf("%s: invalid retry options: %w", task, err)
+		}
 
 		for {
 			started := time.Now()

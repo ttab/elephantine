@@ -24,8 +24,9 @@ const (
 // Options configures a Pacer. Every duration defaults to the matching
 // Default constant, except GiveUpAfter where zero means "never give up".
 type Options struct {
-	// GiveUpAfter is how long a failure streak is allowed to last before
-	// Pace gives up. Zero means that it never does.
+	// GiveUpAfter is how much time the supervised function may spend
+	// failing before Pace gives up. Zero means that it never does. It must
+	// be longer than HealthyRuntime; see Validate.
 	GiveUpAfter time.Duration
 	// HealthyRuntime is the runtime a run must reach to count as a
 	// success, clearing the failure streak.
@@ -39,46 +40,86 @@ type Options struct {
 	// resets the backoff.
 	MinRuntime time.Duration
 	// IgnoreCancellation makes a run that ended in a context cancellation
-	// count as neither a failure nor a success. joblock.Run sets it: there
-	// a cancellation means the lock was lost, not that the job failed.
+	// count as neither a failure nor a success, and keeps the time it
+	// lasted out of the failure budget. joblock.Run sets it: there a
+	// cancellation means the lock was lost, not that the job failed.
 	IgnoreCancellation bool
 }
 
+// withDefaults substitutes the default for every duration that isn't a usable
+// value. A negative one is a mistake rather than a request, and taking it
+// literally would silently disable the budget: every run is at least zero long,
+// so a negative HealthyRuntime makes every run healthy.
+func (o Options) withDefaults() Options {
+	if o.HealthyRuntime <= 0 {
+		o.HealthyRuntime = DefaultHealthyRuntime
+	}
+
+	if o.BackoffFloor <= 0 {
+		o.BackoffFloor = DefaultBackoffFloor
+	}
+
+	if o.BackoffCeil <= 0 {
+		o.BackoffCeil = DefaultBackoffCeil
+	}
+
+	if o.MinRuntime <= 0 {
+		o.MinRuntime = DefaultMinRuntime
+	}
+
+	if o.GiveUpAfter < 0 {
+		o.GiveUpAfter = 0
+	}
+
+	o.BackoffCeil = max(o.BackoffCeil, o.BackoffFloor)
+
+	return o
+}
+
+// Validate rejects a budget that cannot mean what it reads. Only a run that
+// reaches HealthyRuntime clears a failure streak, so a budget shorter than
+// that degenerates into "give up on the second failure more than GiveUpAfter
+// apart", however healthy the runs in between were.
+func (o Options) Validate() error {
+	o = o.withDefaults()
+
+	if o.GiveUpAfter == 0 {
+		return nil
+	}
+
+	if o.GiveUpAfter <= o.HealthyRuntime {
+		return fmt.Errorf(
+			"the failure budget must be longer than the healthy runtime that clears it, give up after: %s, healthy runtime: %s",
+			o.GiveUpAfter, o.HealthyRuntime)
+	}
+
+	return nil
+}
+
 // New creates a pacer, applying the default for every duration left at zero.
-func New(opts Options) *Pacer {
-	if opts.HealthyRuntime == 0 {
-		opts.HealthyRuntime = DefaultHealthyRuntime
+func New(opts Options) (*Pacer, error) {
+	err := opts.Validate()
+	if err != nil {
+		return nil, err
 	}
 
-	if opts.BackoffFloor == 0 {
-		opts.BackoffFloor = DefaultBackoffFloor
-	}
-
-	if opts.BackoffCeil == 0 {
-		opts.BackoffCeil = DefaultBackoffCeil
-	}
-
-	if opts.MinRuntime == 0 {
-		opts.MinRuntime = DefaultMinRuntime
-	}
-
-	opts.BackoffCeil = max(opts.BackoffCeil, opts.BackoffFloor)
-
-	return &Pacer{opts: opts, now: time.Now}
+	return &Pacer{opts: opts.withDefaults()}, nil
 }
 
 // Pacer decides how long to wait before restarting a supervised function, and
 // when to stop restarting it altogether.
 type Pacer struct {
 	opts Options
-	// now reads the clock the failure budget is measured against.
-	// Replaced by the tests so that a budget can be exhausted without
-	// waiting for it.
-	now func() time.Time
 
-	backoff      time.Duration
-	failingSince time.Time
-	failures     int
+	backoff time.Duration
+	// lastWait is the delay returned by the previous Pace call, which has
+	// elapsed by the time the next one arrives.
+	lastWait time.Duration
+	// failing reports whether a failure streak is open, and failingFor is
+	// the time it has run for so far.
+	failing    bool
+	failingFor time.Duration
+	failures   int
 }
 
 // Failures is the number of runs in the current failure streak, for logging.
@@ -91,15 +132,16 @@ func (p *Pacer) Failures() int {
 // backoff with jitter, and all returns are padded so that runs start at most
 // once per Options.MinRuntime.
 //
-// When the current failure streak has lasted longer than GiveUpAfter, Pace
-// returns an error wrapping the last one instead, and the function should not
-// be restarted. The streak starts at its first failure and is only cleared by
-// a run that reached HealthyRuntime, so failures accrue towards the budget
-// however slowly they arrive, and the waits between them count towards it —
-// the question the budget answers is how long the task has been broken, not
-// how much of that time it spent executing. The backoff, in contrast, resets
-// after any run that reached MinRuntime: it is there to pace a task that is
-// failing right now, not to judge its health.
+// When the supervised function has spent GiveUpAfter failing, Pace returns an
+// error wrapping the last one instead, and the function should not be
+// restarted. The budget is the time the task has been broken: the failing runs
+// and the waits between them, starting at the first failure of the streak, and
+// cleared only by a run that reached HealthyRuntime. A run that is neither —
+// a nil return too short to be healthy, or, with IgnoreCancellation, one ended
+// by the loss of a lock — leaves the streak open but spends nothing, since the
+// task was not failing while it ran. The backoff, in contrast, resets after any
+// run that reached MinRuntime: it is there to pace a task that is failing right
+// now, not to judge its health.
 func (p *Pacer) Pace(runtime time.Duration, err error) (time.Duration, error) {
 	if p.backoff == 0 || runtime >= p.opts.MinRuntime {
 		p.backoff = p.opts.BackoffFloor
@@ -108,31 +150,32 @@ func (p *Pacer) Pace(runtime time.Duration, err error) (time.Duration, error) {
 	failed := err != nil &&
 		(!p.opts.IgnoreCancellation || !isCancellation(err))
 
-	switch {
-	case runtime >= p.opts.HealthyRuntime:
-		// A run that lasted long enough to be considered healthy
-		// clears the failure history, even if it ended in an error.
-		p.failingSince = time.Time{}
+	// A run that lasted long enough to be considered healthy clears the
+	// streak, even if it ended in an error. If it did end in one, that
+	// error opens a new streak below rather than being forgiven with the
+	// history it just cleared.
+	if runtime >= p.opts.HealthyRuntime {
+		p.failing = false
+		p.failingFor = 0
 		p.failures = 0
-	case failed:
-		if p.failingSince.IsZero() {
-			p.failingSince = p.now()
+	}
+
+	if failed {
+		if p.failing {
+			// The wait before this run and the run itself were
+			// spent failing.
+			p.failingFor += p.lastWait + runtime
 		}
 
+		p.failing = true
 		p.failures++
 	}
 
-	// A healthy run clears the streak even when it ended in an error, so
-	// the budget is only live if this failure left one open.
-	if failed && p.opts.GiveUpAfter > 0 && !p.failingSince.IsZero() {
-		failingFor := p.now().Sub(p.failingSince)
-
-		if failingFor >= p.opts.GiveUpAfter {
-			return 0, fmt.Errorf(
-				"stopping after %v of consecutive failures (%d runs), none of them lasting %v: %w",
-				failingFor.Round(time.Second), p.failures,
-				p.opts.HealthyRuntime, err)
-		}
+	if failed && p.opts.GiveUpAfter > 0 && p.failingFor >= p.opts.GiveUpAfter {
+		return 0, fmt.Errorf(
+			"stopping after %v spent failing (%d runs), none of them lasting %v: %w",
+			p.failingFor.Round(time.Second), p.failures,
+			p.opts.HealthyRuntime, err)
 	}
 
 	var delay time.Duration
@@ -143,7 +186,11 @@ func (p *Pacer) Pace(runtime time.Duration, err error) (time.Duration, error) {
 		p.backoff = min(2*p.backoff, p.opts.BackoffCeil)
 	}
 
-	return max(delay, p.opts.MinRuntime-runtime), nil
+	wait := max(delay, p.opts.MinRuntime-runtime)
+
+	p.lastWait = wait
+
+	return wait, nil
 }
 
 // jitter returns the current backoff with equal jitter applied: a delay in

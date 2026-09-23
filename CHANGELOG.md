@@ -8,13 +8,15 @@ detail.
 
 **Breaking (task and job supervision):** `ErrGroup.GoWithRetries` takes a
 `RetryOptions` struct, and the failure budget on it and on `joblock.Options` is
-a duration — `GiveUpAfter`, how long the task may go on failing — where
+a duration — `GiveUpAfter`, how much time the task may spend failing — where
 `maxRetries` and `MaxConsecutiveFailures` counted attempts. The backoff curve
 is the library's own now, so `BackoffFunction` and `StaticBackoff` are removed
 with nothing to replace them, and every restart is padded out to
 `RetryOptions.MinRuntime`, ten seconds by default. **A budget carried across as
-a count means a different amount of time than the count did.** Every call site
-has to be touched; the
+a count means a different amount of time than the count did**, and **it must be
+longer than `HealthyRuntime`** — only a run of that length clears it, so a
+shorter budget fails the group, and fails `joblock.Run`, rather than being
+accepted as a two-strikes rule. Every call site has to be touched; the
 [v0.30 migration document](docs/migrations/v0.30.md#errgroupgowithretries-and-joblockoptions)
 has the old-to-new table, worked examples, and what the old counts were worth
 under the curve. Zero still means "restart forever" on both APIs.
@@ -56,6 +58,11 @@ Changes:
   defaults are exported and every one is overridable on `RetryOptions` and
   `joblock.Options`. A `BackoffFloor` below `MinRuntime` does nothing, so a
   faster first retry means lowering both.
+- The budget is the time a task spends failing — the failing runs and the waits
+  between them — not wall clock since the first failure. A run that returned
+  nil too early to be healthy, or a `joblock.Run` cut short by the loss of the
+  lock, leaves the streak open but spends nothing, so lock churn cannot exhaust
+  a job's budget and take the service down with it.
 - The old retry reset measured the wait plus the runtime rather than the
   runtime of the run that failed, since `GoWithRetries` stamped its clock
   before the backoff sleep. That was harmless under a static backoff, but it is
