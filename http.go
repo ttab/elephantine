@@ -189,6 +189,16 @@ func ListenAndServeContext(
 	return nil
 }
 
+// NewHTTPClientIntrumentation is the misspelled original name of
+// NewHTTPClientInstrumentation, kept so existing callers keep compiling.
+//
+// Deprecated: use NewHTTPClientInstrumentation.
+func NewHTTPClientIntrumentation(
+	registerer prometheus.Registerer,
+) (*HTTPClientInstrumentation, error) {
+	return NewHTTPClientInstrumentation(registerer)
+}
+
 // HTTPClientInstrumentation provides a way to instrument HTTP clients.
 type HTTPClientInstrumentation struct {
 	inFlight *prometheus.GaugeVec
@@ -197,9 +207,9 @@ type HTTPClientInstrumentation struct {
 	histVec  *prometheus.HistogramVec
 }
 
-// NewHTTPClientIntrumentation registers a set of HTTP client metrics with the
-// provided registerer.
-func NewHTTPClientIntrumentation(
+// NewHTTPClientInstrumentation registers a set of HTTP client metrics with
+// the provided registerer.
+func NewHTTPClientInstrumentation(
 	registerer prometheus.Registerer,
 ) (*HTTPClientInstrumentation, error) {
 	if registerer == nil {
@@ -429,6 +439,10 @@ func LongpollClient() HTTPClientOption {
 	return ResponseHeaderTimeout(0)
 }
 
+// IdleConnections sets the idle connection pool limits of the transport: the
+// total number of idle connections kept, the number kept per host, and how
+// long an idle connection is kept before it is closed. It does not touch the
+// per-host cap on open connections; use MaxConnectionsPerHost for that.
 func IdleConnections(
 	maxIdle int,
 	maxIdlePerHost int,
@@ -436,7 +450,7 @@ func IdleConnections(
 ) HTTPClientOption {
 	return func(opts *HTTPClientOptions) {
 		opts.transport.MaxIdleConns = maxIdle
-		opts.transport.MaxConnsPerHost = maxIdlePerHost
+		opts.transport.MaxIdleConnsPerHost = maxIdlePerHost
 		opts.transport.IdleConnTimeout = idleConnTimeout
 	}
 }

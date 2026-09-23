@@ -82,7 +82,7 @@ Every service should have:
    `MetricsRegisterer` so `pg_job_lock_held`,
    `pg_job_lock_transitions_total`, and `pg_job_lock_restarts_total` land
    on the service registry.
-3. **Outbound HTTP** — one `elephantine.NewHTTPClientIntrumentation` per
+3. **Outbound HTTP** — one `elephantine.NewHTTPClientInstrumentation` per
    binary, and every outbound client instrumented under its own name
    (`repository`, `assets`, `s3`, `oidc`, `jwks`, ...), one name per
    dependency.
