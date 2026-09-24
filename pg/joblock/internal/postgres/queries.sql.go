@@ -34,6 +34,7 @@ func (q *Queries) GetJobLock(ctx context.Context, name string) (GetJobLockRow, e
 const insertJobLock = `-- name: InsertJobLock :one
 INSERT INTO job_lock(name, holder, touched, iteration)
 VALUES ($1, $2, now(), 1)
+ON CONFLICT (name) DO NOTHING
 RETURNING iteration
 `
 
@@ -55,17 +56,15 @@ SET touched = now(),
     iteration = iteration + 1
 WHERE name = $1
       AND holder = $2
-      AND iteration = $3
 `
 
 type PingJobLockParams struct {
-	Name      string
-	Holder    string
-	Iteration int64
+	Name   string
+	Holder string
 }
 
 func (q *Queries) PingJobLock(ctx context.Context, arg PingJobLockParams) (int64, error) {
-	result, err := q.db.Exec(ctx, pingJobLock, arg.Name, arg.Holder, arg.Iteration)
+	result, err := q.db.Exec(ctx, pingJobLock, arg.Name, arg.Holder)
 	if err != nil {
 		return 0, err
 	}
