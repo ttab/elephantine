@@ -7,6 +7,7 @@ FOR UPDATE;
 -- name: InsertJobLock :one
 INSERT INTO job_lock(name, holder, touched, iteration)
 VALUES (@name, @holder, now(), 1)
+ON CONFLICT (name) DO NOTHING
 RETURNING iteration;
 
 -- name: PingJobLock :execrows
@@ -14,8 +15,7 @@ UPDATE job_lock
 SET touched = now(),
     iteration = iteration + 1
 WHERE name = @name
-      AND holder = @holder
-      AND iteration = @iteration;
+      AND holder = @holder;
 
 -- name: StealJobLock :execrows
 UPDATE job_lock
