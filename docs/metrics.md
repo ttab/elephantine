@@ -176,8 +176,8 @@ same condition (lock churn) and additionally catches a lock ping-ponging
 between replicas.
 
 A job that must not fail indefinitely should also set
-`joblock.Options.MaxConsecutiveFailures`, so that a run of failures none of
-which lasted `HealthyRuntime` (five minutes by default) makes
+`joblock.Options.GiveUpAfter`, so that a job that has been failing for that
+long without any run lasting `HealthyRuntime` (five minutes by default) makes
 `joblock.Run` return an error rather than restart forever. That surfaces as
 a task failure in the supervising `elephantine.ErrGroup` — `task_restarts_total`
 or, for a `Required` task, service shutdown — instead of only as a restart

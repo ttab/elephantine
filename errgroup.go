@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/ttab/elephantine/internal/pacer"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -18,11 +19,6 @@ import (
 // unconditionally and opt out from inside it, instead of wrapping the
 // registration in a conditional.
 var ErrTaskDisabled = errors.New("task disabled")
-
-// BackoffFunction returns how long to wait before the given retry attempt. It
-// is used by ErrGroup.GoWithRetries; see StaticBackoff for a constant-delay
-// implementation.
-type BackoffFunction func(retry int) time.Duration
 
 // ErrGroupOption customises the behaviour of an ErrGroup.
 type ErrGroupOption func(o *errGroupOptions)
@@ -157,54 +153,120 @@ func (eg *ErrGroup) Required(task string, fn func(ctx context.Context) error) {
 	})
 }
 
-// GoWithRetries runs a task in a retry loop. The retry counter will reset to
-// zero if more time than `resetAfter` has passed since the last error. This is
-// used to avoid creeping up on a retry limit over long periods of time.
+// Defaults for the restart pacing that ErrGroup.GoWithRetries and
+// joblock.Options configure. Every one of them is exported so that a call
+// site can name the default instead of restating the number.
+const (
+	// DefaultBackoffFloor is the delay before the first restart after a
+	// failure, when RetryOptions.BackoffFloor is left at zero.
+	DefaultBackoffFloor = pacer.DefaultBackoffFloor
+	// DefaultBackoffCeil is the longest the backoff grows to, when
+	// RetryOptions.BackoffCeil is left at zero.
+	DefaultBackoffCeil = pacer.DefaultBackoffCeil
+	// DefaultMinRuntime is the minimum interval between two starts of a
+	// task, when RetryOptions.MinRuntime is left at zero.
+	DefaultMinRuntime = pacer.DefaultMinRuntime
+	// DefaultHealthyRuntime is how long a run must last to count as a
+	// success, when RetryOptions.HealthyRuntime is left at zero.
+	DefaultHealthyRuntime = pacer.DefaultHealthyRuntime
+)
+
+// RetryOptions controls how ErrGroup.GoWithRetries paces the restarts of a
+// failing task, and when it stops restarting it. The zero value restarts
+// forever with the default curve.
+//
+// Restarts are paced with exponential backoff from BackoffFloor to
+// BackoffCeil, with equal jitter, and every restart is padded out to
+// MinRuntime so that a task that fails immediately can't spin. The curve is
+// the pacer's own; there is nothing for a caller to supply.
+type RetryOptions struct {
+	// GiveUpAfter is how much time the task may spend failing before it
+	// gives up and fails the group: the failing runs and the waits between
+	// them, starting at the first failure of the streak and cleared by a
+	// run that reaches HealthyRuntime. Time spent in a run that failed for
+	// neither reason — a nil return too short to be healthy — is not
+	// counted. Zero, the default, means that it restarts forever.
+	// Replaces the maxRetries argument, which counted failures instead of
+	// timing them.
+	//
+	// It must be longer than HealthyRuntime, and wants to be several times
+	// it: nothing shorter than a healthy run clears the budget, so a
+	// budget of about one healthy run means giving up on the second
+	// failure however far apart the two are. A shorter one fails the
+	// group, and fails joblock.Run, rather than being quietly accepted.
+	GiveUpAfter time.Duration
+	// HealthyRuntime is how long a run must last to count as a success
+	// and clear the failure budget — how long it has to keep running
+	// before you would call the task working again. Defaults to
+	// DefaultHealthyRuntime. Replaces the resetAfter argument.
+	HealthyRuntime time.Duration
+	// BackoffFloor is the delay before the first restart after a failure.
+	// Defaults to DefaultBackoffFloor. Setting it below MinRuntime does
+	// nothing, since the restart is padded out to MinRuntime either way —
+	// a faster first retry means lowering both. Replaces the backoff
+	// argument, along with BackoffCeil.
+	BackoffFloor time.Duration
+	// BackoffCeil is the longest the backoff grows to. Defaults to
+	// DefaultBackoffCeil.
+	BackoffCeil time.Duration
+	// MinRuntime is the minimum interval between two starts of the task.
+	// A run that returns faster is padded out to it, and a run that
+	// reaches it resets the backoff. Defaults to DefaultMinRuntime, which
+	// dominates the first restarts of a task that fails immediately: the
+	// backoff only becomes visible once it has doubled past this.
+	MinRuntime time.Duration
+}
+
+// GoWithRetries runs a task in a retry loop, restarting it after a failure
+// with exponential backoff.
+//
+// The task gives up, failing the group, once it has spent
+// RetryOptions.GiveUpAfter failing. That budget is the failing runs and the
+// waits between them, starting at the first failure of the streak, and only a
+// run that lasts RetryOptions.HealthyRuntime clears it. A task that returns
+// nil is done: the loop returns without restarting it.
+//
+// A GiveUpAfter that is not longer than HealthyRuntime fails the group
+// immediately, since only a run of that length clears the budget — see
+// RetryOptions.GiveUpAfter.
 func (eg *ErrGroup) GoWithRetries(
 	task string,
-	maxRetries int,
-	backoff BackoffFunction,
-	resetAfter time.Duration,
+	opts RetryOptions,
 	fn func(ctx context.Context) error,
 ) {
 	eg.grp.Go(func() error {
-		var tries int
-
 		// Initialise the restart series at zero so that increases can
 		// be detected even for a task's first restart.
 		restarts := eg.restarts.WithLabelValues(task)
 
-		// Count starting as a state change.
-		lastStateChange := time.Now()
+		restartPacer, err := pacer.New(pacer.Options{
+			GiveUpAfter:    opts.GiveUpAfter,
+			HealthyRuntime: opts.HealthyRuntime,
+			BackoffFloor:   opts.BackoffFloor,
+			BackoffCeil:    opts.BackoffCeil,
+			MinRuntime:     opts.MinRuntime,
+		})
+		if err != nil {
+			return fmt.Errorf("%s: invalid retry options: %w", task, err)
+		}
 
 		for {
+			started := time.Now()
+
 			err := CallWithRecover(eg.gCtx, fn)
 			if err == nil {
 				return nil
 			}
 
-			// Bail immediately if the group has ben cancelled.
+			// Bail immediately if the group has been cancelled.
 			if eg.gCtx.Err() != nil {
 				return fmt.Errorf("%s: %w", task, eg.gCtx.Err())
 			}
 
-			// If it's been a long time since we last failed we
-			// don't want to creep up on a retry limit over the
-			// course of days, weeks, or months.
-			if time.Since(lastStateChange) > resetAfter {
-				tries = 0
+			wait, giveUp := restartPacer.Pace(time.Since(started), err)
+			if giveUp != nil {
+				return fmt.Errorf("%s: %w", task, giveUp)
 			}
-
-			lastStateChange = time.Now()
-			tries++
-
-			if maxRetries != 0 && tries > maxRetries {
-				return fmt.Errorf(
-					"%s: stopping after %d tries:  %w",
-					task, tries, err)
-			}
-
-			wait := backoff(tries)
 
 			restarts.Inc()
 
@@ -212,7 +274,7 @@ func (eg *ErrGroup) GoWithRetries(
 				"task failure, restarting",
 				LogKeyName, task,
 				LogKeyError, err,
-				LogKeyAttempts, tries,
+				LogKeyAttempts, restartPacer.Failures(),
 				LogKeyDelay, slog.DurationValue(wait),
 			)
 
@@ -256,10 +318,4 @@ func CallWithRecover(ctx context.Context, fn func(ctx context.Context) error) (o
 	}()
 
 	return fn(ctx)
-}
-
-func StaticBackoff(wait time.Duration) BackoffFunction {
-	return func(_ int) time.Duration {
-		return wait
-	}
 }
