@@ -4,7 +4,7 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
-## [v0.30.0] - Unreleased
+## [v0.30.0] - 2026-09-24
 
 **Breaking (task and job supervision):** `ErrGroup.GoWithRetries` takes a
 `RetryOptions` struct, and the failure budget on it and on `joblock.Options` is
