@@ -4,6 +4,19 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
+## [v0.30.1] - Unreleased
+
+Changes:
+
+- `pg.NewPools` creates a service's connection pools, pings them, and
+  registers a `PoolStatCollector` for each: `main` for queries, on the bouncer
+  when `WithBouncer` is given one, and with `WithPubSub` a direct `pubsub` pool
+  of `DefaultPubSubMaxConns` for LISTEN, or the main pool when there is no
+  bouncer. `maxConns` sizes the main pool, overriding `pool_max_conns` in the
+  connection string. `pg.NewPool` creates and registers a single pool. They
+  replace the `newPool` helper and pool wiring services have been copying into
+  their `main.go`.
+
 ## [v0.30.0] - 2026-09-24
 
 **Breaking (task and job supervision):** `ErrGroup.GoWithRetries` takes a

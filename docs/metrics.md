@@ -75,9 +75,12 @@ instrumented code can run without colliding on the default registry.
 
 Every service should have:
 
-1. **Connection pools** — `pg.NewPoolStatCollector(pool, "main")` for the
-   primary pool; additional pools are named for their role (e.g.
-   `"pubsub"`).
+1. **Connection pools** — create them with `pg.NewPools(ctx, reg,
+   connString, maxConns, pg.WithBouncer(...), pg.WithPubSub())`, which
+   registers a `pg.NewPoolStatCollector` for each pool it opens: `"main"`
+   for the pool queries run on, and `"pubsub"` for the direct pool kept for
+   LISTEN behind a bouncer. A pool outside that pair uses `pg.NewPool` with a
+   name for its role.
 2. **Job locks** — every `joblock.New`/`joblock.Run` call passes
    `MetricsRegisterer` so `pg_job_lock_held`,
    `pg_job_lock_transitions_total`, and `pg_job_lock_restarts_total` land
