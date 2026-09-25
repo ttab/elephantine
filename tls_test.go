@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -133,47 +135,223 @@ func TestCertificateSource(t *testing.T) {
 	err = os.WriteFile(keyFile, keyPEM2, 0o600)
 	test.Mustf(t, err, "overwrite key file")
 
-	// Wait for poll + settle + some margin.
-	time.Sleep(500 * time.Millisecond)
-
-	cert2, err := cs.GetCertificate(nil)
-	test.Mustf(t, err, "get rotated certificate")
+	// Wait for the rotated certificate rather than for a fixed margin over
+	// the poll interval and settle delay, which a machine under load
+	// outlasts.
+	cert2 := waitForCertCN(t, cs, "rotated.example.com", 10*time.Second)
 
 	if cert2 == cert1 {
 		t.Fatal("certificate should have been reloaded")
-	}
-
-	parsed, err := x509.ParseCertificate(cert2.Certificate[0])
-	test.Mustf(t, err, "parse rotated certificate")
-
-	if parsed.Subject.CommonName != "rotated.example.com" {
-		t.Fatalf("expected CN 'rotated.example.com', got %q",
-			parsed.Subject.CommonName)
 	}
 
 	cancel()
 	<-done
 }
 
+// certSampleInterval is how often a test samples the served certificate, and
+// certSampleSlack is the tolerance that follows from sampling: a write is
+// timed once the file has been written, and a reload is seen up to a sample
+// interval after it happened.
+const (
+	certSampleInterval = 5 * time.Millisecond
+	certSampleSlack    = 10 * time.Millisecond
+)
+
+// certReloadWatcher records when the certificate a source serves changes,
+// which is the only externally visible sign of a reload.
+type certReloadWatcher struct {
+	mu      sync.Mutex
+	reloads []time.Time
+}
+
+// Reloads returns the times at which the served certificate changed.
+func (w *certReloadWatcher) Reloads() []time.Time {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return slices.Clone(w.reloads)
+}
+
+// WaitFor waits for at least n reloads to have been recorded and returns them.
+// A test that spotted a reload by looking at the certificate itself still has
+// to wait for the watcher to sample it, which is why this takes a deadline
+// rather than reading the slice.
+func (w *certReloadWatcher) WaitFor(
+	t *testing.T, n int, within time.Duration,
+) []time.Time {
+	t.Helper()
+
+	deadline := time.Now().Add(within)
+
+	for {
+		reloads := w.Reloads()
+		if len(reloads) >= n {
+			return reloads
+		}
+
+		if !time.Now().Before(deadline) {
+			t.Fatalf("expected at least %d reloads within %s, saw %d",
+				n, within, len(reloads))
+		}
+
+		time.Sleep(certSampleInterval)
+	}
+}
+
+// watchCertReloads samples the served certificate until the context is
+// cancelled, recording when it changes. Sampling is what lets a test say when
+// a reload happened, rather than whether one had happened by the time it got
+// round to looking, which is a race against the settle delay.
+func watchCertReloads(
+	ctx context.Context, t *testing.T, cs *elephantine.CertificateSource,
+) *certReloadWatcher {
+	t.Helper()
+
+	previous, err := cs.GetCertificate(nil)
+	test.Mustf(t, err, "get initial certificate")
+
+	var w certReloadWatcher
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		ticker := time.NewTicker(certSampleInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+
+			current, err := cs.GetCertificate(nil)
+			if err != nil {
+				t.Errorf("sample certificate: %v", err)
+
+				return
+			}
+
+			if current == previous {
+				continue
+			}
+
+			seen := time.Now()
+
+			w.mu.Lock()
+			w.reloads = append(w.reloads, seen)
+			w.mu.Unlock()
+
+			previous = current
+		}
+	}()
+
+	// The watcher reports through t, so it has to be finished before the
+	// test is.
+	t.Cleanup(func() {
+		<-done
+	})
+
+	return &w
+}
+
+// waitForCertCN waits for the source to serve a certificate with the given
+// common name, and returns it. Waiting for the certificate the test is after
+// costs nothing when the machine is quick, and does not fail when it isn't —
+// unlike sleeping for a margin over the poll interval and settle delay.
+func waitForCertCN(
+	t *testing.T, cs *elephantine.CertificateSource, cn string,
+	within time.Duration,
+) *tls.Certificate {
+	t.Helper()
+
+	deadline := time.Now().Add(within)
+
+	var served string
+
+	for {
+		current, err := cs.GetCertificate(nil)
+		test.Mustf(t, err, "get certificate")
+
+		parsed, err := x509.ParseCertificate(current.Certificate[0])
+		test.Mustf(t, err, "parse certificate")
+
+		if parsed.Subject.CommonName == cn {
+			return current
+		}
+
+		served = parsed.Subject.CommonName
+
+		if !time.Now().Before(deadline) {
+			t.Fatalf("the certificate for %q was not loaded within %s, serving %q",
+				cn, within, served)
+		}
+
+		time.Sleep(certSampleInterval)
+	}
+}
+
+// lastWriteBefore returns the latest write at or before the given time.
+func lastWriteBefore(writes []time.Time, at time.Time) (time.Time, bool) {
+	var (
+		latest time.Time
+		found  bool
+	)
+
+	for _, w := range writes {
+		if w.After(at) {
+			continue
+		}
+
+		if !found || w.After(latest) {
+			latest = w
+			found = true
+		}
+	}
+
+	return latest, found
+}
+
+// TestCertificateSourceSettleDebounce verifies that a burst of writes is
+// reloaded after it ends rather than once per write.
+//
+// The debounce is a statement about the gap between a write and the reload
+// that follows it, so that is what the test asserts, against the times it
+// recorded. Asserting instead that no reload had happened by the end of the
+// write loop made the test a race: the reload is legitimately due a settle
+// delay later, so any stall between the last write and the check — a busy CI
+// runner is enough — failed a source that had behaved perfectly. Timing the
+// gaps also keeps the property honest on a machine that did stall, since a
+// stall spreads the writes out and a reload between two of them is then
+// correct.
 func TestCertificateSourceSettleDebounce(t *testing.T) {
+	const (
+		pollInterval = 50 * time.Millisecond
+		settleDelay  = 300 * time.Millisecond
+		writeGap     = 100 * time.Millisecond
+		writeCount   = 5
+		patience     = 10 * time.Second
+	)
+
 	logger := slog.New(test.NewLogHandler(t, slog.LevelDebug))
 	dir := t.TempDir()
 
-	certPEM, keyPEM := generateSelfSignedCert(t, "debounce.example.com")
+	certPEM, keyPEM := generateSelfSignedCert(t, "debounce-initial.example.com")
 	certFile, keyFile := writeCertFiles(t, dir, certPEM, keyPEM)
 
 	cs, err := elephantine.NewCertificateSource(
 		logger, certFile, keyFile,
-		elephantine.CertSourcePollInterval(50*time.Millisecond),
-		elephantine.CertSourceSettleDelay(300*time.Millisecond),
+		elephantine.CertSourcePollInterval(pollInterval),
+		elephantine.CertSourceSettleDelay(settleDelay),
 	)
 	test.Mustf(t, err, "create certificate source")
 
-	initialCert, err := cs.GetCertificate(nil)
-	test.Mustf(t, err, "get initial certificate")
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	watcher := watchCertReloads(ctx, t, cs)
 
 	done := make(chan struct{})
 
@@ -183,36 +361,48 @@ func TestCertificateSourceSettleDebounce(t *testing.T) {
 		_ = cs.Run(ctx)
 	}()
 
-	// Rapidly overwrite files multiple times to trigger repeated settle
-	// resets.
-	for range 5 {
-		time.Sleep(100 * time.Millisecond)
+	// Overwrite the files repeatedly, faster than the settle delay, and
+	// record when each write landed.
+	var (
+		writeTimes []time.Time
+		lastCN     string
+	)
 
-		newCert, newKey := generateSelfSignedCert(t, "debounce.example.com")
+	for i := range writeCount {
+		time.Sleep(writeGap)
+
+		lastCN = fmt.Sprintf("debounce-%d.example.com", i)
+
+		newCert, newKey := generateSelfSignedCert(t, lastCN)
 
 		err = os.WriteFile(certFile, newCert, 0o600)
 		test.Mustf(t, err, "overwrite cert file")
 
 		err = os.WriteFile(keyFile, newKey, 0o600)
 		test.Mustf(t, err, "overwrite key file")
+
+		writeTimes = append(writeTimes, time.Now())
 	}
 
-	// During the rapid writes the cert should not have been reloaded yet.
-	midCert, err := cs.GetCertificate(nil)
-	test.Mustf(t, err, "get mid-write certificate")
+	// The pair that ends up loaded is the last one written, not an earlier
+	// one the source raced its way to.
+	waitForCertCN(t, cs, lastCN, patience)
 
-	if midCert != initialCert {
-		t.Fatal("certificate should not have been reloaded during rapid writes")
-	}
+	// No reload may land closer than a settle delay behind the write
+	// before it. A source that reloaded on every write would land one poll
+	// interval behind each of them.
+	for i, at := range watcher.WaitFor(t, 1, patience) {
+		write, ok := lastWriteBefore(writeTimes, at)
+		if !ok {
+			t.Fatalf("reload %d happened before any write", i+1)
+		}
 
-	// Wait for settle.
-	time.Sleep(500 * time.Millisecond)
+		gap := at.Sub(write)
 
-	reloadedCert, err := cs.GetCertificate(nil)
-	test.Mustf(t, err, "get reloaded certificate")
-
-	if reloadedCert == initialCert {
-		t.Fatal("certificate should have been reloaded after settle")
+		if gap < settleDelay-certSampleSlack {
+			t.Fatalf("reload %d came %s after the write before it, inside the %s settle delay",
+				i+1, gap, settleDelay)
+		}
 	}
 
 	cancel()
