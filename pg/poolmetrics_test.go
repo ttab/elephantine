@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/ttab/elephantine/pg"
 )
@@ -34,5 +35,28 @@ func TestPoolStatCollector(t *testing.T) {
 	count := testutil.CollectAndCount(collector)
 	if count != 13 {
 		t.Fatalf("expected 13 metrics, got %d", count)
+	}
+}
+
+// NewPools relies on a fresh collector for the same pool and name being enough
+// to unregister one it has lost the reference to.
+func TestPoolStatCollectorUnregisterByEquivalent(t *testing.T) {
+	pool, err := pgxpool.New(context.Background(),
+		"postgres://user:pass@localhost:1/collector_test")
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	defer pool.Close()
+
+	reg := prometheus.NewPedanticRegistry()
+
+	err = reg.Register(pg.NewPoolStatCollector(pool, "main"))
+	if err != nil {
+		t.Fatalf("register collector: %v", err)
+	}
+
+	if !reg.Unregister(pg.NewPoolStatCollector(pool, "main")) {
+		t.Fatal("equivalent collector did not unregister the original")
 	}
 }
