@@ -4,7 +4,7 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
-## [v0.30.1] - Unreleased
+## [v0.30.1] - 2026-09-25
 
 Changes:
 
