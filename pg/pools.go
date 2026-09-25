@@ -42,12 +42,22 @@ func (p *Pools) Close() {
 	}
 }
 
-// PoolsOption configures NewPools.
-type PoolsOption func(o *poolsOptions)
+// PoolsOption configures NewPools. Only this package implements it, which is
+// what lets a PoolOption widen to one.
+type PoolsOption interface {
+	applyPools(o *poolsOptions)
+}
 
 type poolsOptions struct {
 	bouncerConnString string
 	pubsub            bool
+	pool              []PoolOption
+}
+
+type poolsOptionFunc func(o *poolsOptions)
+
+func (f poolsOptionFunc) applyPools(o *poolsOptions) {
+	f(o)
 }
 
 // WithBouncer routes queries through a transaction pooler such as PgBouncer.
@@ -55,18 +65,18 @@ type poolsOptions struct {
 // leaves the service on its direct pool, so a service can pass its bouncer
 // setting through whether or not it is set.
 func WithBouncer(connString string) PoolsOption {
-	return func(o *poolsOptions) {
+	return poolsOptionFunc(func(o *poolsOptions) {
 		o.bouncerConnString = connString
-	}
+	})
 }
 
 // WithPubSub asks for a pool that can LISTEN, for applications that use
 // Subscribe. Behind a bouncer that is a direct pool of its own, sized
 // DefaultPubSubMaxConns; without one it is the main pool.
 func WithPubSub() PoolsOption {
-	return func(o *poolsOptions) {
+	return poolsOptionFunc(func(o *poolsOptions) {
 		o.pubsub = true
-	}
+	})
 }
 
 // NewPools creates the connection pools of a service with NewPool, so that
@@ -78,6 +88,10 @@ func WithPubSub() PoolsOption {
 // size is fixed at DefaultPubSubMaxConns, and it doesn't count against
 // maxConns. Without a bouncer the main pool serves as the pubsub pool, and is
 // registered once, as "main".
+//
+// A PoolOption such as WithAfterConnect applies to every pool created, since
+// what it sets belongs to the connection rather than to a pool's role: a type
+// registration the main pool needs is one the pubsub pool needs too.
 func NewPools(
 	ctx context.Context,
 	reg prometheus.Registerer,
@@ -88,13 +102,13 @@ func NewPools(
 	var o poolsOptions
 
 	for _, opt := range opts {
-		opt(&o)
+		opt.applyPools(&o)
 	}
 
 	plan := planPools(connString, maxConns, o)
 
 	main, err := NewPool(ctx, reg,
-		PoolNameMain, plan.main.connString, plan.main.maxConns)
+		PoolNameMain, plan.main.connString, plan.main.maxConns, o.pool...)
 	if err != nil {
 		return nil, fmt.Errorf("create %s pool: %w", PoolNameMain, err)
 	}
@@ -104,7 +118,8 @@ func NewPools(
 	switch {
 	case plan.pubsub != nil:
 		pubsub, err := NewPool(ctx, reg,
-			PoolNamePubSub, plan.pubsub.connString, plan.pubsub.maxConns)
+			PoolNamePubSub, plan.pubsub.connString, plan.pubsub.maxConns,
+			o.pool...)
 		if err != nil {
 			// A new collector for the same pool and name has the
 			// same descriptors, which is what Unregister matches on.
