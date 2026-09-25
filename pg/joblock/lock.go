@@ -113,7 +113,6 @@ type Lock struct {
 	cleanedUp     chan struct{}
 	name          string
 	identity      string
-	iteration     int64
 	pingInterval  time.Duration
 	staleAfter    time.Duration
 	checkInterval time.Duration
@@ -320,7 +319,6 @@ func (jl *Lock) loop() {
 				nextState = StateHeld
 
 				jl.lastPing = change.Ping
-				jl.iteration = change.Iteration
 			}
 		case StateHeld:
 			if time.Since(jl.lastPing) > jl.pingInterval {
@@ -370,9 +368,8 @@ func (jl *Lock) loop() {
 }
 
 type acquireChange struct {
-	Ok        bool
-	Ping      time.Time
-	Iteration int64
+	Ok   bool
+	Ping time.Time
 }
 
 func (jl *Lock) attemptAcquire() acquireChange {
@@ -417,20 +414,23 @@ func (jl *Lock) acquire(ctx context.Context, q *postgres.Queries) (acquireChange
 		return jl.steal(ctx, q, state)
 	}
 
-	iteration, err := q.InsertJobLock(ctx, postgres.InsertJobLockParams{
+	// Another instance can insert the row between our read and our
+	// insert. The insert does nothing on the conflict rather than
+	// failing on it, since a unique violation would abort the
+	// transaction and turn the commit of a handled race into an error.
+	_, err = q.InsertJobLock(ctx, postgres.InsertJobLockParams{
 		Name:   jl.name,
 		Holder: jl.identity,
 	})
-	if pg.IsConstraintError(err, "job_lock_pkey") {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return acquireChange{}, nil
 	} else if err != nil {
 		return acquireChange{}, fmt.Errorf("failed to insert job lock: %w", err)
 	}
 
 	return acquireChange{
-		Ok:        true,
-		Ping:      time.Now(),
-		Iteration: iteration,
+		Ok:   true,
+		Ping: time.Now(),
 	}, nil
 }
 
@@ -454,9 +454,8 @@ func (jl *Lock) steal(
 	}
 
 	return acquireChange{
-		Ok:        true,
-		Ping:      time.Now(),
-		Iteration: state.Iteration + 1,
+		Ok:   true,
+		Ping: time.Now(),
 	}, nil
 }
 
@@ -517,11 +516,17 @@ func (jl *Lock) ping() State {
 	ctx, cancel := context.WithTimeout(context.Background(), jl.timeout)
 	defer cancel()
 
+	// The ping matches on the holder alone. Our identity is unique to
+	// this Lock, and the only way another instance takes the row is by
+	// stealing it, which replaces the holder. Matching on the iteration
+	// as well would make the lock depend on us knowing the outcome of
+	// every earlier ping, and a ping that commits after its timeout has
+	// fired leaves the row an iteration ahead of anything we could
+	// have recorded.
 	updated, err := postgres.New(jl.db).PingJobLock(ctx,
 		postgres.PingJobLockParams{
-			Name:      jl.name,
-			Holder:    jl.identity,
-			Iteration: jl.iteration,
+			Name:   jl.name,
+			Holder: jl.identity,
 		})
 
 	switch {
@@ -541,7 +546,6 @@ func (jl *Lock) ping() State {
 		return StateLost
 	}
 
-	jl.iteration++
 	jl.lastPing = time.Now()
 
 	return StateHeld

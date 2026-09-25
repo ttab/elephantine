@@ -4,6 +4,20 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
+## [v0.30.1] - Unreleased
+
+Changes:
+
+- A job lock whose ping commits after the client has timed out no longer loses
+  the lock on the next ping. Pings now match the row on the holder alone. Before,
+  they also matched the iteration, which that late commit had already advanced, so
+  the holder logged `out of sync: no matching job lock to ping` and left the lock
+  unheld until it went stale.
+- Losing the race to create a job lock row no longer logs `failed to acquire job
+  lock` with `commit unexpectedly resulted in rollback`. The insert now uses
+  `ON CONFLICT DO NOTHING`, so the losing transaction is not aborted, and every
+  replica that starts at the same moment stops logging a spurious error.
+
 ## [v0.30.0] - 2026-09-24
 
 **Breaking (task and job supervision):** `ErrGroup.GoWithRetries` takes a
