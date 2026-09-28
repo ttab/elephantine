@@ -18,7 +18,7 @@ require (
 	github.com/prometheus/client_model v0.6.3
 	github.com/ryanuber/go-glob v1.0.0
 	github.com/ttab/eltest v0.5.0
-	github.com/ttab/mage v0.13.0
+	github.com/ttab/mage v0.15.0
 	github.com/twitchtv/twirp v8.1.3+incompatible
 	github.com/urfave/cli/v3 v3.11.0
 	golang.org/x/oauth2 v0.36.0
