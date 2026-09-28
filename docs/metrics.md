@@ -80,7 +80,9 @@ Every service should have:
    registers a `pg.NewPoolStatCollector` for each pool it opens: `"main"`
    for the pool queries run on, and `"pubsub"` for the direct pool kept for
    LISTEN behind a bouncer. A pool outside that pair uses `pg.NewPool` with a
-   name for its role.
+   name for its role. A service whose connections need per-connection setup,
+   such as registering pgvector's types, passes `pg.WithAfterConnect` to
+   either; `NewPools` applies it to every pool it creates.
 2. **Job locks** — every `joblock.New`/`joblock.Run` call passes
    `MetricsRegisterer` so `pg_job_lock_held`,
    `pg_job_lock_transitions_total`, and `pg_job_lock_restarts_total` land
