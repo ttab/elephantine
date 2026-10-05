@@ -31,6 +31,10 @@ type Pools struct {
 	// WithPubSub, and is the same pool as Main when no bouncer is
 	// configured. Nil otherwise.
 	PubSub *pgxpool.Pool
+	// Bouncer reports whether Main goes through the bouncer, which is
+	// decided by the rule WithBouncer documents rather than by whether a
+	// bouncer connection string was passed.
+	Bouncer bool
 }
 
 // Close closes the pools, each one once.
@@ -113,7 +117,7 @@ func NewPools(
 		return nil, fmt.Errorf("create %s pool: %w", PoolNameMain, err)
 	}
 
-	pools := Pools{Main: main}
+	pools := Pools{Main: main, Bouncer: plan.bouncer}
 
 	switch {
 	case plan.pubsub != nil:
@@ -143,8 +147,9 @@ type poolSpec struct {
 }
 
 type poolPlan struct {
-	main   poolSpec
-	pubsub *poolSpec
+	main    poolSpec
+	pubsub  *poolSpec
+	bouncer bool
 }
 
 // planPools decides which pools NewPools creates. A nil pubsub spec means that
@@ -158,7 +163,8 @@ func planPools(connString string, maxConns int, o poolsOptions) poolPlan {
 	}
 
 	plan := poolPlan{
-		main: poolSpec{connString: bouncer, maxConns: maxConns},
+		main:    poolSpec{connString: bouncer, maxConns: maxConns},
+		bouncer: true,
 	}
 
 	if o.pubsub {

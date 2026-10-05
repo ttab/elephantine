@@ -15,6 +15,9 @@ Changes:
   creates. `pg.PoolsOption` is an interface rather than a function type, so a
   `PoolOption` can be passed wherever a `PoolsOption` is; no call site
   changes, but code that named either type has to stop.
+- `pg.Pools.Bouncer` reports whether the main pool goes through the bouncer,
+  so a service can log it without restating the rule `pg.WithBouncer`
+  applies to an empty or direct connection string.
 
 ## [v0.30.2] - 2026-09-28
 

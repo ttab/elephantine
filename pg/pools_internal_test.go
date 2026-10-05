@@ -24,13 +24,14 @@ func TestPlanPools(t *testing.T) {
 		},
 		"bouncer without pubsub skips the direct pool": {
 			opts: poolsOptions{bouncerConnString: bouncer},
-			want: poolPlan{main: poolSpec{bouncer, 8}},
+			want: poolPlan{main: poolSpec{bouncer, 8}, bouncer: true},
 		},
 		"bouncer with pubsub": {
 			opts: poolsOptions{bouncerConnString: bouncer, pubsub: true},
 			want: poolPlan{
-				main:   poolSpec{bouncer, 8},
-				pubsub: &poolSpec{direct, DefaultPubSubMaxConns},
+				main:    poolSpec{bouncer, 8},
+				pubsub:  &poolSpec{direct, DefaultPubSubMaxConns},
+				bouncer: true,
 			},
 		},
 		"bouncer equal to direct is no bouncer": {
