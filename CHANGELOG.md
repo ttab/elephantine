@@ -4,6 +4,21 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
+## [v0.30.3] - Unreleased
+
+Changes:
+
+- `pg.WithAfterConnect` runs a hook on every connection a pool opens, for
+  applications that need extension types such as pgvector's registered per
+  connection. It is a `pg.PoolOption`, a new option kind: `NewPool` takes
+  them as a variadic parameter, and `NewPools` applies them to every pool it
+  creates. `pg.PoolsOption` is an interface rather than a function type, so a
+  `PoolOption` can be passed wherever a `PoolsOption` is; no call site
+  changes, but code that named either type has to stop.
+- `pg.Pools.Bouncer` reports whether the main pool goes through the bouncer,
+  so a service can log it without restating the rule `pg.WithBouncer`
+  applies to an empty or direct connection string.
+
 ## [v0.30.2] - 2026-09-28
 
 Changes:
