@@ -59,9 +59,13 @@ func WithPingGrace(d time.Duration) SubscriberOption {
 	}
 }
 
-// WithOnReconnect sets a callback that is called before the initial listen and
-// after each reconnect. This is useful for reloading state that may have changed
-// while disconnected.
+// WithOnReconnect sets a callback that is called once the connection is
+// listening, on the initial connect and after each reconnect. It is for
+// reloading state that may have changed while disconnected: because the
+// LISTENs are already in place when it runs, a notification published during
+// the reload is queued on the connection and delivered after the callback
+// returns, so nothing falls between the reload and the subscription. An error
+// from the callback tears the connection down and is retried as a reconnect.
 func WithOnReconnect(fn func(ctx context.Context) error) SubscriberOption {
 	return func(s *Subscriber) {
 		s.onReconnect = fn
@@ -230,13 +234,6 @@ func (s *Subscriber) runListenerWithPing(ctx context.Context) (outErr error) {
 	default:
 	}
 
-	if s.onReconnect != nil {
-		err := s.onReconnect(ctx)
-		if err != nil {
-			return fmt.Errorf("on reconnect: %w", err)
-		}
-	}
-
 	conn, err := s.listenPool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire connection from pool: %w", err)
@@ -274,6 +271,17 @@ func (s *Subscriber) runListenerWithPing(ctx context.Context) (outErr error) {
 	_, err = pConn.Exec(ctx, "LISTEN "+pingIdent.Sanitize())
 	if err != nil {
 		return fmt.Errorf("start listening to ping channel: %w", err)
+	}
+
+	// The hook runs once every LISTEN is in place, so that a notification
+	// published while it reloads state is queued on the connection and
+	// read right after, rather than lost in the gap between the reload
+	// and the LISTEN.
+	if s.onReconnect != nil {
+		err := s.onReconnect(ctx)
+		if err != nil {
+			return fmt.Errorf("on reconnect: %w", err)
+		}
 	}
 
 	// bounceCtx is a child of ctx that we cancel as soon as a bounce signal
