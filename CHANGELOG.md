@@ -4,6 +4,27 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
+## [v0.30.4] - Unreleased
+
+**Behaviour change (`pg.Subscriber` reconnect hook):** the `WithOnReconnect`
+callback now runs after the connection's `LISTEN`s are issued, on the initial
+connect and on every reconnect, where it ran before the connection was
+acquired. A notification published while the callback reloads state is
+therefore queued on the connection and delivered right after it returns,
+instead of being lost in the gap between the reload and the `LISTEN`; a
+consumer that reconciles in the hook no longer misses a change that lands
+during the reconcile. The callback's contract is otherwise the same: it runs
+on the subscriber's goroutine, and an error from it tears the connection down
+and is retried as a reconnect. A callback that assumed it ran before any
+notification could arrive has to cope with the subscriber delivering a
+notification immediately after it returns, which every current consumer
+already does.
+
+Changes:
+
+- `pg.Subscriber` calls the `WithOnReconnect` hook after `LISTEN` rather than
+  before acquiring the connection.
+
 ## [v0.30.3] - 2026-10-05
 
 Changes:
