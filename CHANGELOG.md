@@ -4,7 +4,7 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
-## [v0.30.4] - Unreleased
+## [v0.30.4] - 2026-10-19
 
 **Behaviour change (`pg.Subscriber` reconnect hook):** the `WithOnReconnect`
 callback now runs after the connection's `LISTEN`s are issued, on the initial
@@ -23,7 +23,7 @@ already does.
 Changes:
 
 - `pg.Subscriber` calls the `WithOnReconnect` hook after `LISTEN` rather than
-  before acquiring the connection.
+  before acquiring the connection. (#284)
 
 ## [v0.30.3] - 2026-10-05
 
