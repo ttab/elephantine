@@ -4,7 +4,7 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
-## [v0.31.0] - Unreleased
+## [v0.31.0] - 2026-10-24
 
 **Behaviour change (tokens bound to a key):** a token with a `cnf` claim is
 refused unless the service verifies DPoP proofs, where it used to be accepted as
@@ -37,16 +37,16 @@ Changes:
   `DELEGATE_AUDIENCE`), or `JWTAuthInfoParserOptions.TrustedIssuers`. **A
   service that accepts delegate tokens must set `jwt-audience`** (or
   `delegate-audience`); `AuthenticationConfigFromSettings` refuses to start
-  without one. EdDSA is accepted alongside RS256 and ES384.
+  without one. EdDSA is accepted alongside RS256 and ES384. (#285)
 - `rpc.NewDPoPVerifier` and `rpc.DPoPInterceptor` verify RFC 9449 proofs for
   bound tokens on both stacks, with a per-service `DPoPOptions.MaxProofAge` for
   proofs signed when a background upload is queued, an optional
   `DPoPOptions.Replay` store for `jti` replay protection, and the
   `rpc_dpop_proofs_total{result}` metric. The `DPoP` authorization scheme is
-  accepted for bound tokens.
+  accepted for bound tokens. (#285)
 - `JWTClaims` carries the `cnf`, `document_uuid` and `assignment_uuid` claims
   of delegate tokens, as `Confirmation`, `DocumentUUID` and `AssignmentUUID`,
-  and `BoundKey` returns the key thumbprint a token is bound to.
+  and `BoundKey` returns the key thumbprint a token is bound to. (#285)
 
 ## [v0.30.4] - 2026-10-19
 
