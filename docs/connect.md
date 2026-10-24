@@ -441,6 +441,9 @@ document with, is a scope of its own and never satisfies `doc_read`. A service
 that understands the suffix checks for the suffixed scope itself; one that does
 not treats it as unsatisfied, which is the safe direction. `jwt-scope-prefix`
 is stripped from the start of each scope only, never from inside a suffix.
+Scopes are separated by spaces and nothing else, as in RFC 6749: a tab or other
+whitespace is part of a scope, so a scope an issuer checked as one, such as
+`doc_read:x<tab>doc_admin`, cannot be read here as two.
 
 ### elephant-delegate tokens and DPoP
 
@@ -496,6 +499,17 @@ bearer token. A token whose `cnf` holds anything other than a `jkt` is refused
 when it is parsed, for the same reason. The token may be sent with the `DPoP`
 or the `Bearer` scheme; the proof is required either way, so the scheme is no
 downgrade.
+
+**Only the authentication middleware accepts a bound token.** Code that calls
+the parser itself, such as a websocket or proxy handler reading the
+`Authorization` header, takes the result as authentication and has no proof to
+check, so `AuthInfoFromHeader`, `AuthInfoFromToken` and
+`ValidateTokenWithClaims` refuse a bound token with `elephantine.ErrBoundToken`.
+The middleware gets it through `PendingAuthInfoFromHeader`, which a parser
+offers by implementing `elephantine.PendingParser`; a handler that wants to
+accept bound tokens itself uses that, puts the info on the context with
+`SetAuthInfo`, and verifies the proof with `DPoPVerifier.VerifyHTTP` before
+reading it back with `GetAuthInfo`.
 
 On a Connect mount the proof is checked by `rpc.DPoPInterceptor`, which
 `WithDPoPVerification` installs outside the authentication safety net and

@@ -1057,7 +1057,14 @@ func authenticateRequest(
 	parser AuthInfoParser, requireAuth ServiceAuth,
 	authorization string,
 ) (context.Context, error) {
-	info, err := parser.AuthInfoFromHeader(authorization)
+	// A parser that refuses bound tokens elsewhere hands them to the
+	// middleware, which holds them back until their proof is verified.
+	parse := parser.AuthInfoFromHeader
+	if pp, ok := parser.(auth.PendingParser); ok {
+		parse = pp.PendingAuthInfoFromHeader
+	}
+
+	info, err := parse(authorization)
 
 	switch {
 	case errors.Is(err, ErrNoAuthorization):

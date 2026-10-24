@@ -32,6 +32,11 @@ type AuthInfo = auth.Info
 // missing, rather than being invalid, expired, or malformed.
 var ErrNoAuthorization = auth.ErrNoAuthorization
 
+// ErrBoundToken is the error JWTAuthInfoParser refuses a token bound to a key
+// with, everywhere but in the authentication middleware, which verifies its
+// DPoP proof. See JWTAuthInfoParser.AuthInfoFromHeader.
+var ErrBoundToken = auth.ErrBoundToken
+
 // AuthInfoParser validates bearer tokens and turns them into AuthInfo. See
 // JWTAuthInfoParser for the standard JWT-based implementation.
 type AuthInfoParser = auth.Parser
@@ -79,6 +84,15 @@ type issuerValidator struct {
 	// configuration is not safe to validate against.
 	err error
 }
+
+// PendingParser is implemented by an AuthInfoParser that refuses tokens bound
+// to a key in AuthInfoFromHeader, and accepts them pending their DPoP proof in
+// PendingAuthInfoFromHeader. The authentication middleware uses the latter
+// when a parser has it.
+type PendingParser = auth.PendingParser
+
+// The middleware relies on this to accept bound tokens.
+var _ PendingParser = &JWTAuthInfoParser{}
 
 // JWTAuthInfoParserOptions configures a JWTAuthInfoParser: the expected
 // audience and issuer to validate against, an optional scope prefix to strip
@@ -132,13 +146,15 @@ func ScopePrefixRegexp(prefix string) *regexp.Regexp {
 // StripScopePrefix removes the prefix from the start of every scope in the
 // space separated scope claim that carries it. A scope without the prefix is
 // kept as it is, and the prefix is never stripped from inside a scope, such as
-// from the suffix of "doc_read:<uuid>".
+// from the suffix of "doc_read:<uuid>". Scopes are separated by spaces only,
+// as in HasScope, so that stripping cannot turn other whitespace into a
+// separator.
 func StripScopePrefix(scope string, prefix string) string {
 	if prefix == "" {
 		return scope
 	}
 
-	scopes := strings.Fields(scope)
+	scopes := auth.Scopes(scope)
 
 	for i := range scopes {
 		scopes[i] = strings.TrimPrefix(scopes[i], prefix)
@@ -266,7 +282,22 @@ func NewStaticAuthInfoParser(
 	}, opts)
 }
 
+// AuthInfoFromToken validates the token and returns its AuthInfo. A token bound
+// to a key is refused with ErrBoundToken, see AuthInfoFromHeader.
 func (p *JWTAuthInfoParser) AuthInfoFromToken(token string) (*AuthInfo, error) {
+	info, err := p.authInfoFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, bound := info.Claims.BoundKey(); bound {
+		return nil, ErrBoundToken
+	}
+
+	return info, nil
+}
+
+func (p *JWTAuthInfoParser) authInfoFromToken(token string) (*AuthInfo, error) {
 	item := p.cache.Get(token)
 	if item != nil && !item.IsExpired() {
 		value := item.Value()
@@ -276,7 +307,7 @@ func (p *JWTAuthInfoParser) AuthInfoFromToken(token string) (*AuthInfo, error) {
 
 	var claims JWTClaims
 
-	_, err := p.ValidateTokenWithClaims(token, &claims)
+	_, err := p.validateToken(token, &claims)
 	if err != nil {
 		return nil, err
 	}
@@ -321,10 +352,36 @@ func (p *JWTAuthInfoParser) AuthInfoFromToken(token string) (*AuthInfo, error) {
 }
 
 // ValidateTokenWithClaims validates the token against the issuer it names
-// and decodes its claims into claims. It checks no DPoP proof: code that takes
-// the result as authentication must refuse a token with a cnf claim, or verify
-// its proof, itself.
+// and decodes its claims into claims. A token bound to a key is refused with
+// ErrBoundToken, since the result is taken as authentication and nothing here
+// checks the DPoP proof.
 func (p *JWTAuthInfoParser) ValidateTokenWithClaims(token string, claims jwt.Claims) (*jwt.Token, error) {
+	parsed, err := p.validateToken(token, claims)
+	if err != nil {
+		return nil, err
+	}
+
+	// The claims type is the caller's, so the binding is read on its own,
+	// the same way JWTClaims reads it.
+	var probe struct {
+		jwt.RegisteredClaims
+
+		Confirmation *Confirmation `json:"cnf"`
+	}
+
+	_, _, err = jwt.NewParser().ParseUnverified(token, &probe)
+	if err != nil {
+		return nil, fmt.Errorf("invalid claims: %w", err)
+	}
+
+	if probe.Confirmation != nil {
+		return nil, ErrBoundToken
+	}
+
+	return parsed, nil
+}
+
+func (p *JWTAuthInfoParser) validateToken(token string, claims jwt.Claims) (*jwt.Token, error) {
 	v := p.validatorFor(token)
 	if v.err != nil {
 		return nil, fmt.Errorf("invalid token: %w", v.err)
@@ -369,36 +426,64 @@ func (p *JWTAuthInfoParser) validatorFor(token string) *issuerValidator {
 	return v
 }
 
-// AuthInfoFromHeader parses an Authorization header. The Bearer scheme is
-// accepted for every token, and the DPoP scheme of RFC 9449 for a token that
-// is bound to a key. A bound token's proof is checked by the DPoP verifier the
-// service is configured with, whichever scheme it was sent with, so accepting
-// it as Bearer is no downgrade.
+// AuthInfoFromHeader parses a Bearer Authorization header.
+//
+// A token bound to a key is refused with ErrBoundToken, whichever scheme it is
+// sent with. Code that calls the parser itself, such as a websocket handler,
+// takes the result as authentication and has no DPoP proof to check, so
+// handing it a bound token would make that token a bearer token. Bound tokens
+// are accepted by the authentication middleware of ServiceOptions, through
+// PendingAuthInfoFromHeader.
 func (p *JWTAuthInfoParser) AuthInfoFromHeader(authorization string) (*AuthInfo, error) {
+	return p.authInfoFromHeader(authorization, false)
+}
+
+// PendingAuthInfoFromHeader parses an Authorization header like
+// AuthInfoFromHeader, but also accepts a token bound to a key, with the Bearer
+// scheme or the DPoP scheme of RFC 9449. The DPoP proof of such a token has
+// not been checked: the info is for SetAuthInfo, which holds it back from
+// GetAuthInfo until a rpc.DPoPVerifier has verified the proof. It is what the
+// authentication middleware uses, and accepting a bound token sent as Bearer
+// is no downgrade there, since the proof is checked either way.
+func (p *JWTAuthInfoParser) PendingAuthInfoFromHeader(authorization string) (*AuthInfo, error) {
+	return p.authInfoFromHeader(authorization, true)
+}
+
+func (p *JWTAuthInfoParser) authInfoFromHeader(
+	authorization string, allowBound bool,
+) (*AuthInfo, error) {
 	if authorization == "" {
 		return nil, ErrNoAuthorization
 	}
 
 	tokenType, token, _ := strings.Cut(authorization, " ")
 
+	var dpop bool
+
 	switch strings.ToLower(tokenType) {
 	case "bearer":
-		return p.AuthInfoFromToken(token)
 	case "dpop":
-		info, err := p.AuthInfoFromToken(token)
-		if err != nil {
-			return nil, err
-		}
-
-		if _, bound := info.Claims.BoundKey(); !bound {
-			return nil, errors.New(
-				"the DPoP scheme is only accepted for a token bound to a key")
-		}
-
-		return info, nil
+		dpop = true
 	default:
 		return nil, errors.New("only bearer and DPoP tokens are supported")
 	}
+
+	info, err := p.authInfoFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+
+	_, bound := info.Claims.BoundKey()
+
+	switch {
+	case bound && !allowBound:
+		return nil, ErrBoundToken
+	case !bound && dpop:
+		return nil, errors.New(
+			"the DPoP scheme is only accepted for a token bound to a key")
+	}
+
+	return info, nil
 }
 
 // coreURIScheme is the URI scheme used for subject, unit, and application

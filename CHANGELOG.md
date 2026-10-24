@@ -13,7 +13,11 @@ it is parsed. A service that accepts such tokens passes
 `elephantine.WithDPoPVerification` to `NewDefaultServiceOptions` or
 `SetAuthInfoValidation`; until a bound token's proof has been verified,
 `GetAuthInfo` and `RequireAnyScope` do not see the caller. The identity
-provider's session tokens carry no `cnf` and are unaffected. See
+provider's session tokens carry no `cnf` and are unaffected. Outside the
+middleware, `AuthInfoFromHeader`, `AuthInfoFromToken` and
+`ValidateTokenWithClaims` refuse a bound token with `ErrBoundToken`, since
+nothing there checks its proof; the middleware uses the new
+`PendingAuthInfoFromHeader`. See
 [elephant-delegate tokens and DPoP](docs/connect.md#elephant-delegate-tokens-and-dpop).
 
 **Behaviour change (scopes):** `jwt-scope-prefix` is stripped from the start
@@ -22,7 +26,8 @@ inside a suffix, as in `doc_read:<prefix>x`, was stripped too.
 `ScopePrefixRegexp` keeps the old behaviour and is deprecated in favour of
 `StripScopePrefix`. Scopes are matched exactly, and `doc_read:<uuid>` never
 satisfies `doc_read`; a scope claim with repeated spaces no longer matches an
-empty scope name.
+empty scope name. Scopes are separated by spaces only, as in RFC 6749, so a
+tab or other whitespace inside a scope no longer splits it in two.
 
 Changes:
 

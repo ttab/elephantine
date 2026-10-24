@@ -343,7 +343,7 @@ func TestTrustedIssuer(t *testing.T) {
 		return ss
 	}
 
-	info, err := parser.AuthInfoFromHeader(
+	info, err := parser.PendingAuthInfoFromHeader(
 		"DPoP " + sign(delegateClaims(testDelegateAudience)))
 	test.Mustf(t, err, "accept a delegate token for this audience")
 
@@ -378,7 +378,7 @@ func TestTrustedIssuer(t *testing.T) {
 
 	unbound := sign(otherCnf)
 
-	_, err = parser.AuthInfoFromHeader("DPoP " + unbound)
+	_, err = parser.PendingAuthInfoFromHeader("DPoP " + unbound)
 	test.MustNotf(t, err, "refuse the DPoP scheme for an unbound token")
 
 	_, err = parser.AuthInfoFromHeader("Bearer " + unbound)
@@ -507,6 +507,6 @@ func TestAuthenticationConfigDelegate(t *testing.T) {
 	ss, err := token.SignedString(key)
 	test.Mustf(t, err, "sign the delegate token")
 
-	_, err = conf.AuthParser.AuthInfoFromHeader("Bearer " + ss)
+	_, err = conf.AuthParser.PendingAuthInfoFromHeader("Bearer " + ss)
 	test.Mustf(t, err, "accept a delegate token verified against the JWKS")
 }

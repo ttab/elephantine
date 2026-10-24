@@ -34,6 +34,8 @@ const (
 	// publicURL is the URL the service is reached at from the outside,
 	// which is what the proofs name rather than the test listener.
 	publicURL = "https://stream.example.com"
+	// reasonWrongHTU is in the error for a proof made for another URL.
+	reasonWrongHTU = "wrong htu"
 )
 
 // delegate is an elephant-delegate stand-in: the signing key of the tokens,
@@ -118,6 +120,16 @@ type proof struct {
 	JTI string
 	// Skip sends no proof at all.
 	Skip bool
+	// Duplicate sends the proof in two DPoP headers.
+	Duplicate bool
+	// Alg and SignKey sign the proof with another algorithm and key,
+	// leaving the jwk header describing the device key.
+	Alg     jwt.SigningMethod
+	SignKey any
+	// Scheme replaces the DPoP authorization scheme.
+	Scheme string
+	// Tamper changes the proof before it is signed.
+	Tamper func(header map[string]any, claims jwt.MapClaims)
 }
 
 // dpopTransport authorizes every request with a bound token and a DPoP proof
@@ -132,10 +144,22 @@ type dpopTransport struct {
 
 func (tr *dpopTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
-	r.Header.Set("Authorization", "DPoP "+tr.token)
+
+	scheme := "DPoP"
+	if tr.proof.Scheme != "" {
+		scheme = tr.proof.Scheme
+	}
+
+	r.Header.Set("Authorization", scheme+" "+tr.token)
 
 	if !tr.proof.Skip {
-		r.Header.Set(rpc.DPoPHeader, tr.sign(r))
+		signed := tr.sign(r)
+
+		r.Header.Set(rpc.DPoPHeader, signed)
+
+		if tr.proof.Duplicate {
+			r.Header.Add(rpc.DPoPHeader, signed)
+		}
 	}
 
 	next := tr.next
@@ -198,7 +222,21 @@ func (tr *dpopTransport) sign(r *http.Request) string {
 		"y":   base64.RawURLEncoding.EncodeToString(raw[33:]),
 	}
 
-	signed, err := proofToken.SignedString(key)
+	if p.Tamper != nil {
+		claims, _ := proofToken.Claims.(jwt.MapClaims)
+
+		p.Tamper(proofToken.Header, claims)
+	}
+
+	var signKey any = key
+
+	if p.Alg != nil {
+		proofToken.Method = p.Alg
+		proofToken.Header["alg"] = p.Alg.Alg()
+		signKey = p.SignKey
+	}
+
+	signed, err := proofToken.SignedString(signKey)
 	test.Mustf(tr.t, err, "sign the proof")
 
 	return signed
@@ -275,8 +313,8 @@ func TestDPoPBoundToken(t *testing.T) {
 		"no_proof":        {proof{Skip: true}, "no proof was given"},
 		"other_key":       {proof{Key: otherKey}, "not signed with the key"},
 		"wrong_method":    {proof{Method: http.MethodPut}, "wrong htm"},
-		"wrong_url":       {proof{URL: publicURL + "/other.Service/Echo"}, "wrong htu"},
-		"wrong_host":      {proof{URL: "https://elsewhere.example.com/x"}, "wrong htu"},
+		"wrong_url":       {proof{URL: publicURL + "/other.Service/Echo"}, reasonWrongHTU},
+		"wrong_host":      {proof{URL: "https://elsewhere.example.com/x"}, reasonWrongHTU},
 		"other_token":     {proof{Token: "another-token"}, "wrong ath"},
 		"stale":           {proof{Age: 10 * time.Minute}, "iat outside"},
 		"from_the_future": {proof{Age: -time.Minute}, "iat outside"},

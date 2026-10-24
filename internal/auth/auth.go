@@ -99,19 +99,29 @@ func (c *Confirmation) UnmarshalJSON(data []byte) error {
 // are matched exactly: "doc_read:<uuid>" is a scope of its own and does not
 // satisfy "doc_read".
 func (c JWTClaims) HasScope(name string) bool {
-	return slices.Contains(strings.Fields(c.Scope), name)
+	return slices.Contains(Scopes(c.Scope), name)
 }
 
 // HasAnyScope returns true if the Scope claim contains any of the named
 // scopes. Scopes are matched exactly, as in HasScope.
 func (c JWTClaims) HasAnyScope(names ...string) bool {
-	for scope := range strings.FieldsSeq(c.Scope) {
+	for _, scope := range Scopes(c.Scope) {
 		if slices.Contains(names, scope) {
 			return true
 		}
 	}
 
 	return false
+}
+
+// Scopes splits a scope claim into its scopes. RFC 6749 separates scopes with
+// a space and nothing else, so other whitespace is part of a scope: splitting
+// on it too would read a scope that the issuer checked as one, such as
+// "doc_read:x<tab>doc_admin", as two. Repeated spaces give no empty scope.
+func Scopes(scope string) []string {
+	return slices.DeleteFunc(strings.Split(scope, " "), func(s string) bool {
+		return s == ""
+	})
 }
 
 // Info is used to add authentication information to a request context. It is
@@ -150,6 +160,21 @@ func ClientIDFromContext(ctx context.Context) string {
 // ErrNoAuthorization is used to communicate that authorization was completely
 // missing, rather than being invalid, expired, or malformed.
 var ErrNoAuthorization = errors.New("no authorization provided")
+
+// ErrBoundToken refuses a token bound to a key where nothing verifies its DPoP
+// proof. Without the proof such a token would be a bearer token, which is what
+// binding it was to prevent.
+var ErrBoundToken = errors.New(
+	"the token is bound to a key, and is only accepted with a DPoP proof" +
+		" verified by the service's authentication middleware")
+
+// PendingParser is implemented by a Parser whose AuthInfoFromHeader refuses
+// tokens bound to a key. PendingAuthInfoFromHeader accepts them, for the
+// authentication middleware, which puts the info on the request context where
+// GetInfo holds it back until the DPoP proof has been verified.
+type PendingParser interface {
+	PendingAuthInfoFromHeader(authorization string) (*Info, error)
+}
 
 // Parser validates bearer tokens and turns them into Info.
 type Parser interface {
