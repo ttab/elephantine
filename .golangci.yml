@@ -78,6 +78,7 @@ linters:
         - github.com/ttab/elephantine/rpc.ToTwirp(
         - github.com/ttab/elephantine/rpc.FromTwirp(
         - github.com/ttab/elephantine/rpc.RequireAnyScope(
+        - (*github.com/ttab/elephantine/rpc.DPoPVerifier).VerifyHTTP(
         - github.com/ttab/elephantine/internal/auth.GetError(
         - github.com/ttab/elephantine/internal/rpcmetrics.New(
         - (*connectrpc.com/connect.Error).Unwrap(
