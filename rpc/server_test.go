@@ -119,6 +119,8 @@ type stackConfig struct {
 	server           []elephantine.APIServerOption
 	messageBytes     int
 	sendMessageBytes int
+	parserOpts       elephantine.JWTAuthInfoParserOptions
+	dpop             *rpc.DPoPOptions
 }
 
 // stackOption configures the test stack.
@@ -161,6 +163,22 @@ func withSendMessageBytes(n int) stackOption {
 	}
 }
 
+// withParserOptions sets the options of the token parser. The issuer is
+// testIssuer unless the options name another.
+func withParserOptions(opts elephantine.JWTAuthInfoParserOptions) stackOption {
+	return func(c *stackConfig) {
+		c.parserOpts = opts
+	}
+}
+
+// withDPoP makes the service accept tokens bound to a key, verifying their
+// proofs with a verifier configured with the options.
+func withDPoP(opts rpc.DPoPOptions) stackOption {
+	return func(c *stackConfig) {
+		c.dpop = &opts
+	}
+}
+
 // newStack starts an API server serving the implementation over both Twirp and
 // Connect, with the standard service options.
 func newStack(
@@ -176,15 +194,27 @@ func newStack(
 		o(&conf)
 	}
 
+	if conf.parserOpts.Issuer == "" {
+		conf.parserOpts.Issuer = testIssuer
+	}
+
 	var (
 		records = &recordingHandler{}
 		logger  = slog.New(records)
 		reg     = prometheus.NewRegistry()
 		key     = test.NewSigningKey(t)
 		parser  = elephantine.NewStaticAuthInfoParser(
-			t.Context(), key.PublicKey,
-			elephantine.JWTAuthInfoParserOptions{Issuer: testIssuer})
+			t.Context(), key.PublicKey, conf.parserOpts)
+		authOpts []elephantine.AuthOption
 	)
+
+	if conf.dpop != nil {
+		verifier, err := rpc.NewDPoPVerifier(reg, *conf.dpop)
+		test.Mustf(t, err, "create the DPoP verifier")
+
+		authOpts = append(authOpts,
+			elephantine.WithDPoPVerification(verifier))
+	}
 
 	so := elephantine.ServiceOptions{
 		JSONSkipDefaults:    true,
@@ -192,7 +222,7 @@ func newStack(
 		MaxSendMessageBytes: conf.sendMessageBytes,
 	}
 
-	so.SetAuthInfoValidation(parser, requireAuth)
+	so.SetAuthInfoValidation(parser, requireAuth, authOpts...)
 	so.AddLoggingHooks(logger)
 
 	err := so.AddMetricsHooks(reg, conf.metrics...)
@@ -276,10 +306,13 @@ func (s *stack) StreamClient(
 // Clients returns one client per protocol, all of them the plain protobuf
 // interface the service is implemented against.
 func (s *stack) Clients(token string) map[string]testservice.TestService {
-	var (
-		client = s.HTTPClient(token)
-		base   = "http://" + s.Addr
-	)
+	return s.clientsWith(s.HTTPClient(token))
+}
+
+// clientsWith returns one client per protocol, all of them making their
+// requests with the HTTP client.
+func (s *stack) clientsWith(client *http.Client) map[string]testservice.TestService {
+	base := "http://" + s.Addr
 
 	return map[string]testservice.TestService{
 		"twirp": testservice.NewTestServiceProtobufClient(base, client),

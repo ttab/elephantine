@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MicahParks/keyfunc/v3"
 	"github.com/urfave/cli/v3"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
@@ -105,6 +106,23 @@ func AuthenticationCLIFlags() []cli.Flag {
 			Sources: cli.EnvVars("JWT_SCOPE_PREFIX"),
 		},
 		&cli.StringFlag{
+			Name: "delegate-issuer",
+			Usage: "The iss of elephant-delegate's tokens, to accept them" +
+				" besides the identity provider's; empty accepts none",
+			Sources: cli.EnvVars("DELEGATE_ISSUER"),
+		},
+		&cli.StringFlag{
+			Name:    "delegate-jwks-url",
+			Usage:   "URL of elephant-delegate's JWKS, required with delegate-issuer",
+			Sources: cli.EnvVars("DELEGATE_JWKS_URL"),
+		},
+		&cli.StringFlag{
+			Name: "delegate-audience",
+			Usage: "The aud an elephant-delegate token must carry to be" +
+				" accepted; defaults to jwt-audience",
+			Sources: cli.EnvVars("DELEGATE_AUDIENCE"),
+		},
+		&cli.StringFlag{
 			Name:    "client-id",
 			Sources: cli.EnvVars("CLIENT_ID"),
 		},
@@ -128,13 +146,28 @@ type AuthenticationConfig struct {
 
 // AuthenticationSettings holds the raw inputs used to build an
 // AuthenticationConfig: the OIDC configuration URL, the expected JWT audience
-// and scope prefix, and the client credentials used to mint tokens.
+// and scope prefix, the elephant-delegate issuer to trust, if any, and the
+// client credentials used to mint tokens.
 type AuthenticationSettings struct {
 	OIDCConfig   string
 	Audience     string
 	ScopePrefix  string
 	ClientID     string
 	ClientSecret string
+
+	// DelegateIssuer is the iss of elephant-delegate's tokens. Setting it
+	// makes the parser accept them besides the identity provider's, see
+	// TrustedIssuer; leaving it empty accepts none.
+	DelegateIssuer string
+	// DelegateJWKS is the URL of elephant-delegate's JWKS. It is required
+	// with DelegateIssuer.
+	DelegateJWKS string
+	// DelegateAudience is the aud a delegate token must carry to be
+	// accepted. It defaults to Audience, and one of the two must be set
+	// with DelegateIssuer: elephant-delegate mints tokens for several
+	// services, and without an audience check this service would accept
+	// a token minted for any of them.
+	DelegateAudience string
 }
 
 func AuthenticationConfigFromCLI(
@@ -148,6 +181,10 @@ func AuthenticationConfigFromCLI(
 			ClientSecret: cmd.String("client-secret"),
 			Audience:     cmd.String("jwt-audience"),
 			ScopePrefix:  cmd.String("jwt-scope-prefix"),
+
+			DelegateIssuer:   cmd.String("delegate-issuer"),
+			DelegateJWKS:     cmd.String("delegate-jwks-url"),
+			DelegateAudience: cmd.String("delegate-audience"),
 		},
 		scopes)
 }
@@ -175,13 +212,24 @@ func AuthenticationConfigFromSettings(
 		conf.TokenSource = ts
 	}
 
+	parserOpts := JWTAuthInfoParserOptions{
+		Issuer:      oidcConfig.Issuer,
+		Audience:    settings.Audience,
+		ScopePrefix: settings.ScopePrefix,
+	}
+
+	if settings.DelegateIssuer != "" {
+		delegate, err := delegateIssuer(ctx, settings, parserOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		parserOpts.TrustedIssuers = append(parserOpts.TrustedIssuers,
+			delegate)
+	}
+
 	authInfoParser, err := NewJWKSAuthInfoParser(
-		ctx, oidcConfig.JwksURI,
-		JWTAuthInfoParserOptions{
-			Issuer:      oidcConfig.Issuer,
-			Audience:    settings.Audience,
-			ScopePrefix: settings.ScopePrefix,
-		})
+		ctx, oidcConfig.JwksURI, parserOpts)
 	if err != nil {
 		return nil, fmt.Errorf("retrieve JWKS: %w", err)
 	}
@@ -189,6 +237,40 @@ func AuthenticationConfigFromSettings(
 	conf.AuthParser = authInfoParser
 
 	return &conf, nil
+}
+
+// delegateIssuer configures elephant-delegate as a trusted issuer, refusing a
+// configuration that the parser would otherwise only refuse token by token.
+func delegateIssuer(
+	ctx context.Context,
+	settings AuthenticationSettings, opts JWTAuthInfoParserOptions,
+) (TrustedIssuer, error) {
+	if settings.DelegateJWKS == "" {
+		return TrustedIssuer{}, errors.New(
+			"a delegate issuer needs a delegate JWKS URL")
+	}
+
+	ti := TrustedIssuer{
+		Issuer:   settings.DelegateIssuer,
+		Audience: settings.DelegateAudience,
+	}
+
+	// Checked before the JWKS is fetched, so that a configuration error
+	// is reported as one rather than as a fetch failure.
+	err := validateTrustedIssuer(ti, opts)
+	if err != nil {
+		return TrustedIssuer{}, fmt.Errorf("configure the delegate issuer: %w", err)
+	}
+
+	keys, err := keyfunc.NewDefaultCtx(ctx, []string{settings.DelegateJWKS})
+	if err != nil {
+		return TrustedIssuer{}, fmt.Errorf(
+			"retrieve the delegate JWKS: %w", err)
+	}
+
+	ti.Keyfunc = keys.Keyfunc
+
+	return ti, nil
 }
 
 func (conf *AuthenticationConfig) NewTokenSource(

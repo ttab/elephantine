@@ -621,17 +621,20 @@ const (
 // This sets up authentication, logging and metrics for both stacks: apply the
 // options to a Twirp server with the ServerOptions() method, and to a Connect
 // handler with HandlerOptions().
+//
+// The auth options are passed on to SetAuthInfoValidation.
 func NewDefaultServiceOptions(
 	logger *slog.Logger,
 	parser AuthInfoParser,
 	reg prometheus.Registerer,
 	requireAuth ServiceAuth,
+	authOpts ...AuthOption,
 ) (ServiceOptions, error) {
 	so := ServiceOptions{
 		JSONSkipDefaults: true,
 	}
 
-	so.SetAuthInfoValidation(parser, requireAuth)
+	so.SetAuthInfoValidation(parser, requireAuth, authOpts...)
 	so.AddLoggingHooks(logger)
 
 	err := so.AddMetricsHooks(reg)
@@ -934,19 +937,39 @@ func (so *ServiceOptions) addInterceptor(i connect.Interceptor) {
 // for a mount that does not run the middleware: they refuse a call that reaches
 // a handler with no authenticated caller on its context when the service
 // requires authentication, rather than letting it run unauthenticated.
+//
+// A token bound to a key, such as an elephant-delegate token with a cnf claim,
+// is only accepted with WithDPoPVerification, and only with a valid DPoP proof.
+// Without the option the middleware refuses it, since accepting it without
+// its proof would make it a bearer token. With it, a Connect call's proof is
+// verified by rpc.DPoPInterceptor, and any other request's by the middleware.
+// Until the proof has been verified the caller is not visible to GetAuthInfo,
+// so a handler can never act on a bound token whose proof was not checked.
 func (so *ServiceOptions) SetAuthInfoValidation(
-	parser AuthInfoParser, requireAuth ServiceAuth,
+	parser AuthInfoParser, requireAuth ServiceAuth, opts ...AuthOption,
 ) {
 	var (
 		refusals    = so.refusals()
 		errorWriter = connect.NewErrorWriter()
+		conf        authOptions
 	)
+
+	for _, o := range opts {
+		o(&conf)
+	}
 
 	so.AuthMiddleware = func(
 		w http.ResponseWriter, r *http.Request, next http.Handler,
 	) error {
 		ctx, err := authenticateRequest(r.Context(), parser, requireAuth,
 			r.Header.Get("Authorization"))
+		if err != nil {
+			refusals.refuse(errorWriter, w, r, err)
+
+			return nil
+		}
+
+		err = checkKeyBinding(r.WithContext(ctx), conf.dpop)
 		if err != nil {
 			refusals.refuse(errorWriter, w, r, err)
 
@@ -970,8 +993,59 @@ func (so *ServiceOptions) SetAuthInfoValidation(
 		so.Hooks = &hooks
 	}
 
+	// The DPoP interceptor goes outside the safety net, which would
+	// otherwise refuse a bound token as unauthenticated before its proof
+	// had been checked.
+	if conf.dpop != nil {
+		so.Interceptors = append(so.Interceptors,
+			rpc.DPoPInterceptor(conf.dpop))
+	}
+
 	so.Interceptors = append(so.Interceptors,
 		rpc.AuthInfoInterceptor(bool(requireAuth)))
+}
+
+// AuthOption configures SetAuthInfoValidation.
+type AuthOption func(o *authOptions)
+
+type authOptions struct {
+	dpop *rpc.DPoPVerifier
+}
+
+// WithDPoPVerification makes the service accept tokens bound to a key, such as
+// elephant-delegate's document tokens, verifying their DPoP proofs with the
+// verifier. A service without it refuses every bound token.
+func WithDPoPVerification(v *rpc.DPoPVerifier) AuthOption {
+	return func(o *authOptions) {
+		o.dpop = v
+	}
+}
+
+// checkKeyBinding refuses a request made with a token bound to a key that the
+// service cannot verify the proof of, and verifies the proof of one that will
+// not pass through rpc.DPoPInterceptor: everything but a Connect mount
+// registered with RegisterConnect, which is where that interceptor runs.
+func checkKeyBinding(r *http.Request, dpop *rpc.DPoPVerifier) error {
+	info, ok := auth.PendingInfo(r.Context())
+	if !ok {
+		return nil
+	}
+
+	if _, bound := info.Claims.BoundKey(); !bound {
+		return nil
+	}
+
+	if dpop == nil {
+		return rpc.Unauthenticated(
+			"invalid authorization: the token is bound to a key," +
+				" and this service does not accept DPoP proofs")
+	}
+
+	if rpcStackOf(r.Context()) == rpcStackConnect {
+		return nil
+	}
+
+	return dpop.VerifyHTTP(r)
 }
 
 // authenticateRequest parses the authorization header and returns a context
@@ -983,7 +1057,14 @@ func authenticateRequest(
 	parser AuthInfoParser, requireAuth ServiceAuth,
 	authorization string,
 ) (context.Context, error) {
-	info, err := parser.AuthInfoFromHeader(authorization)
+	// A parser that refuses bound tokens elsewhere hands them to the
+	// middleware, which holds them back until their proof is verified.
+	parse := parser.AuthInfoFromHeader
+	if pp, ok := parser.(auth.PendingParser); ok {
+		parse = pp.PendingAuthInfoFromHeader
+	}
+
+	info, err := parse(authorization)
 
 	switch {
 	case errors.Is(err, ErrNoAuthorization):

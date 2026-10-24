@@ -435,6 +435,116 @@ Because the middleware answers before the body is read, an unauthenticated
 caller cannot make a replica unmarshal a request body or probe its parsing,
 which is the exposure the request body limit alone did not close.
 
+Scopes are matched exactly, by `RequireAnyScope` and `JWTClaims.HasScope`
+alike: `doc_read:<uuid>`, the form elephant-delegate restricts a scope to one
+document with, is a scope of its own and never satisfies `doc_read`. A service
+that understands the suffix checks for the suffixed scope itself; one that does
+not treats it as unsatisfied, which is the safe direction. `jwt-scope-prefix`
+is stripped from the start of each scope only, never from inside a suffix.
+Scopes are separated by spaces and nothing else, as in RFC 6749: a tab or other
+whitespace is part of a scope, so a scope an issuer checked as one, such as
+`doc_read:x<tab>doc_admin`, cannot be read here as two.
+
+### elephant-delegate tokens and DPoP
+
+A service accepts tokens from elephant-delegate besides the identity
+provider's by trusting it as a second issuer. With `AuthenticationCLIFlags` that
+is three settings:
+
+| Flag | Environment | |
+|---|---|---|
+| `delegate-issuer` | `DELEGATE_ISSUER` | The `iss` of the delegate's tokens. Empty, the default, trusts no second issuer. |
+| `delegate-jwks-url` | `DELEGATE_JWKS_URL` | The delegate's JWKS, required with the issuer. |
+| `delegate-audience` | `DELEGATE_AUDIENCE` | The `aud` a delegate token must carry here. Defaults to `jwt-audience`. |
+
+**A service that accepts delegate tokens must set `jwt-audience`** (or
+`delegate-audience`). elephant-delegate mints tokens for several services, and
+the audience is the only thing that says which one a token is for: without the
+check, every service that trusts the delegate would accept a token minted for
+any of them. `AuthenticationConfigFromSettings` refuses to start without one,
+and a `TrustedIssuer` configured by hand without one has all its tokens
+refused. A delegate token must also carry an `exp`; the identity provider's
+tokens are validated exactly as before.
+
+`JWTAuthInfoParserOptions.TrustedIssuers` is the same thing without the CLI
+helper. The parser reads a token's `iss` before checking it and validates the
+token against that issuer's keys, issuer and audience, so a forged `iss` gets
+nothing: a token the delegate signed that claims to be the identity provider's
+is checked against the identity provider's keys. EdDSA, the delegate's
+signature algorithm, is accepted alongside RS256 and ES384.
+
+**A token bound to a key is only accepted with its DPoP proof.** The delegate
+binds the tokens it mints for the app's native shell to the device's key, with
+a `cnf` claim holding the key's RFC 7638 thumbprint, and the shell sends an
+RFC 9449 proof signed with that key on every request. A service accepts them by
+passing a verifier to the authentication setup:
+
+```go
+dpop, err := rpc.NewDPoPVerifier(reg, rpc.DPoPOptions{
+    // What callers call: the htu of a proof is checked against it.
+    PublicURL: "https://stream.api.example.com",
+})
+if err != nil {
+    return fmt.Errorf("create the DPoP verifier: %w", err)
+}
+
+opt, err := elephantine.NewDefaultServiceOptions(
+    logger, auth.AuthParser, reg, elephantine.ServiceAuthRequired,
+    elephantine.WithDPoPVerification(dpop))
+```
+
+A service without `WithDPoPVerification` refuses every bound token, with or
+without a proof, since accepting it without one would turn it back into a
+bearer token. A token whose `cnf` holds anything other than a `jkt` is refused
+when it is parsed, for the same reason. The token may be sent with the `DPoP`
+or the `Bearer` scheme; the proof is required either way, so the scheme is no
+downgrade.
+
+**Only the authentication middleware accepts a bound token.** Code that calls
+the parser itself, such as a websocket or proxy handler reading the
+`Authorization` header, takes the result as authentication and has no proof to
+check, so `AuthInfoFromHeader`, `AuthInfoFromToken` and
+`ValidateTokenWithClaims` refuse a bound token with `elephantine.ErrBoundToken`.
+The middleware gets it through `PendingAuthInfoFromHeader`, which a parser
+offers by implementing `elephantine.PendingParser`; a handler that wants to
+accept bound tokens itself uses that, puts the info on the context with
+`SetAuthInfo`, and verifies the proof with `DPoPVerifier.VerifyHTTP` before
+reading it back with `GetAuthInfo`.
+
+On a Connect mount the proof is checked by `rpc.DPoPInterceptor`, which
+`WithDPoPVerification` installs outside the authentication safety net and
+which, like every interceptor in `rpc`, covers streams. Its `htu` is checked
+against `PublicURL` followed by the procedure, `/<pkg>.<Service>/<Method>`. A
+Twirp call, and any request on a mount the interceptor does not run on, is
+checked by the middleware against `PublicURL` followed by the request path.
+**Until the proof has been verified the caller is not on the context as far as
+`GetAuthInfo` and `RequireAnyScope` are concerned**, so a handler cannot act on
+a bound token whose proof was never checked, however it was mounted.
+
+A proof is accepted when it is the only `DPoP` header; its `typ` is
+`dpop+jwt`; it is ES256, signed with the P-256 key in its `jwk` header, whose
+thumbprint is the token's `cnf.jkt`; its `htm` and `htu` match the request,
+ignoring query and fragment; its `ath` is the hash of the token; and its `iat`
+is no older than `MaxProofAge` and no more than five seconds in the future. A
+refused proof is `unauthenticated`. With a `DPoPOptions.Replay` store, a
+proof's `jti` is also accepted only once per key, and a store that fails
+refuses the call as `internal`; give a store shared by the replicas, since a
+per-replica one lets a proof be replayed against the next replica.
+
+**`MaxProofAge` is per service, and the default of a minute is for proofs made
+just before the call.** That is what RFC 9449 assumes and what an interactive
+call does. The shell's background uploads cannot: iOS hands a queued request to
+its upload daemon, so the proof is signed when the upload is queued and may be
+hours old when it arrives. A service that takes such requests sets
+`MaxProofAge` to the longest a request may wait in that queue, typically the
+lifetime of the tokens it accepts, and makes a replay harmless instead, by
+de-duplicating on a client-generated upload ID and chunk index: a proof is
+still bound to the method, URL and token of its request, so a replay can only
+repeat that request.
+
+Every proof checked is counted in `rpc_dpop_proofs_total{result}`, see
+[metrics.md](metrics.md#rpc-metrics).
+
 ### Metrics
 
 `rpc_requests_total`, `rpc_duration_seconds` and `rpc_responses_total` keep
@@ -479,7 +589,10 @@ Two things the series do not cover, and one that changed:
   visible only in the ingress logs.
 - **A call the authentication middleware refuses is counted by the
   middleware**, as a response and not as a request, which is what the Twirp
-  hooks have always reported. It is logged there too, with the same keys and
+  hooks have always reported. A bound token refused for its DPoP proof is
+  counted the same way when the middleware checked it. One refused by
+  `rpc.DPoPInterceptor` has already passed the metrics interceptor, so it is
+  counted as a request and as a response with `code="unauthenticated"`. It is logged there too, with the same keys and
   levels a refused call was logged with when the stacks rendered the error.
 - **A handler error that is not a `*connect.Error` but that wraps
   `context.Canceled` or a deadline is reported as `canceled` or

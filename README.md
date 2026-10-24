@@ -9,7 +9,7 @@ Shared functionality for Elephant systems. It's most likely not something anyone
 ### Root package
 
 - **HTTP/API server** — production-ready server with graceful shutdown, TLS, CORS (with public, CDN-friendly path prefixes), request body limits, health/readiness probes, and pprof
-- **JWT & OIDC** — JWT claims parsing, OIDC discovery, and OAuth2 client credentials
+- **JWT & OIDC** — JWT claims parsing, OIDC discovery, and OAuth2 client credentials, elephant-delegate as a second trusted issuer, and DPoP proofs for key-bound tokens (see [docs/connect.md](docs/connect.md#elephant-delegate-tokens-and-dpop))
 - **RPC** — protocol-neutral authentication middleware, and the Twirp hooks and Connect interceptors that give a service the same logging, metrics and error behaviour on both stacks. See [Serving Connect and Twirp](#serving-connect-and-twirp) below, and [docs/connect.md](docs/connect.md) for the fleet-wide reference
 - **HTTP client** — configurable client with timeouts, connection limits, oauth2 token injection, and Prometheus instrumentation
 - **Graceful shutdown** — signal-based (SIGINT/SIGTERM) shutdown coordination

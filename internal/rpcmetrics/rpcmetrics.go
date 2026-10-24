@@ -63,7 +63,7 @@ type Metrics struct {
 func New(reg prometheus.Registerer) (*Metrics, error) {
 	var m Metrics
 
-	requests, err := registerOrReuse(reg, prometheus.NewCounterVec(
+	requests, err := RegisterOrReuse(reg, prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "rpc_requests_total",
 			Help: "Number of RPC requests received.",
@@ -74,7 +74,7 @@ func New(reg prometheus.Registerer) (*Metrics, error) {
 		return nil, err
 	}
 
-	duration, err := registerOrReuse(reg, prometheus.NewHistogramVec(
+	duration, err := RegisterOrReuse(reg, prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "rpc_duration_seconds",
 			Help:    "Duration for a rpc call.",
@@ -88,7 +88,7 @@ func New(reg prometheus.Registerer) (*Metrics, error) {
 
 	// The buckets run out to about four and a half hours, since a stream's
 	// duration is the lifetime of a subscription and not a latency.
-	streamDuration, err := registerOrReuse(reg, prometheus.NewHistogramVec(
+	streamDuration, err := RegisterOrReuse(reg, prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name: "rpc_stream_duration_seconds",
 			Help: "Lifetime of a streaming RPC, observed when the stream" +
@@ -104,7 +104,7 @@ func New(reg prometheus.Registerer) (*Metrics, error) {
 		return nil, err
 	}
 
-	streamsActive, err := registerOrReuse(reg, prometheus.NewGaugeVec(
+	streamsActive, err := RegisterOrReuse(reg, prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "rpc_streams_active",
 			Help: "Number of streaming RPCs currently open. A count that" +
@@ -118,7 +118,7 @@ func New(reg prometheus.Registerer) (*Metrics, error) {
 		return nil, err
 	}
 
-	responses, err := registerOrReuse(reg, prometheus.NewCounterVec(
+	responses, err := RegisterOrReuse(reg, prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "rpc_responses_total",
 			Help: "Number of RPC responses sent.",
@@ -129,7 +129,7 @@ func New(reg prometheus.Registerer) (*Metrics, error) {
 		return nil, err
 	}
 
-	protocolResponses, err := registerOrReuse(reg, prometheus.NewCounterVec(
+	protocolResponses, err := RegisterOrReuse(reg, prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "rpc_protocol_responses_total",
 			Help: "Number of RPC responses sent, by protocol, RPC code" +
@@ -161,9 +161,9 @@ func New(reg prometheus.Registerer) (*Metrics, error) {
 	return &m, nil
 }
 
-// registerOrReuse registers the collector, returning an already registered
+// RegisterOrReuse registers the collector, returning an already registered
 // collector with the same descriptors instead of an error.
-func registerOrReuse[C prometheus.Collector](
+func RegisterOrReuse[C prometheus.Collector](
 	reg prometheus.Registerer, c C,
 ) (C, error) {
 	var zero C

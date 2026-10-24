@@ -4,6 +4,50 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
+## [v0.31.0] - Unreleased
+
+**Behaviour change (tokens bound to a key):** a token with a `cnf` claim is
+refused unless the service verifies DPoP proofs, where it used to be accepted as
+a bearer token, and one whose `cnf` holds anything but a `jkt` is refused when
+it is parsed. A service that accepts such tokens passes
+`elephantine.WithDPoPVerification` to `NewDefaultServiceOptions` or
+`SetAuthInfoValidation`; until a bound token's proof has been verified,
+`GetAuthInfo` and `RequireAnyScope` do not see the caller. The identity
+provider's session tokens carry no `cnf` and are unaffected. Outside the
+middleware, `AuthInfoFromHeader`, `AuthInfoFromToken` and
+`ValidateTokenWithClaims` refuse a bound token with `ErrBoundToken`, since
+nothing there checks its proof; the middleware uses the new
+`PendingAuthInfoFromHeader`. See
+[elephant-delegate tokens and DPoP](docs/connect.md#elephant-delegate-tokens-and-dpop).
+
+**Behaviour change (scopes):** `jwt-scope-prefix` is stripped from the start
+of each scope only. It used to be stripped at any word boundary, so a prefix
+inside a suffix, as in `doc_read:<prefix>x`, was stripped too.
+`ScopePrefixRegexp` keeps the old behaviour and is deprecated in favour of
+`StripScopePrefix`. Scopes are matched exactly, and `doc_read:<uuid>` never
+satisfies `doc_read`; a scope claim with repeated spaces no longer matches an
+empty scope name. Scopes are separated by spaces only, as in RFC 6749, so a
+tab or other whitespace inside a scope no longer splits it in two.
+
+Changes:
+
+- elephant-delegate can be trusted as a second token issuer with its own JWKS
+  and audience: the `delegate-issuer`, `delegate-jwks-url` and
+  `delegate-audience` flags (`DELEGATE_ISSUER`, `DELEGATE_JWKS_URL`,
+  `DELEGATE_AUDIENCE`), or `JWTAuthInfoParserOptions.TrustedIssuers`. **A
+  service that accepts delegate tokens must set `jwt-audience`** (or
+  `delegate-audience`); `AuthenticationConfigFromSettings` refuses to start
+  without one. EdDSA is accepted alongside RS256 and ES384.
+- `rpc.NewDPoPVerifier` and `rpc.DPoPInterceptor` verify RFC 9449 proofs for
+  bound tokens on both stacks, with a per-service `DPoPOptions.MaxProofAge` for
+  proofs signed when a background upload is queued, an optional
+  `DPoPOptions.Replay` store for `jti` replay protection, and the
+  `rpc_dpop_proofs_total{result}` metric. The `DPoP` authorization scheme is
+  accepted for bound tokens.
+- `JWTClaims` carries the `cnf`, `document_uuid` and `assignment_uuid` claims
+  of delegate tokens, as `Confirmation`, `DocumentUUID` and `AssignmentUUID`,
+  and `BoundKey` returns the key thumbprint a token is bound to.
+
 ## [v0.30.4] - 2026-10-19
 
 **Behaviour change (`pg.Subscriber` reconnect hook):** the `WithOnReconnect`
