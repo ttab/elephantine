@@ -4,6 +4,18 @@ All notable changes to this library from v0.26.0 onwards are documented here.
 The entries below are derived from release tags; see the linked PRs for full
 detail.
 
+## [v0.32.0] - Unreleased
+
+Changes:
+
+- `TLSCLIFlags` and `APIServerTLSFromCLI` give a service the HTTPS listener
+  from the command line: `tls-addr` (`TLS_ADDR` or `TLS_LISTEN_ADDR`,
+  `DefaultTLSAddr` by default), `cert-file` (`TLS_CERT_PATH`) and `key-file`
+  (`TLS_KEY_PATH`), the variables helm-elib sets when `tlsSupport` is on. They
+  replace the flags each service declared for itself; the listener is the one
+  `APIServerTLS` already runs, serving HTTP/1.1 and HTTP/2 negotiated through
+  ALPN, which helm-elib's `http2Services` target group needs.
+
 ## [v0.31.0] - 2026-10-24
 
 **Behaviour change (tokens bound to a key):** a token with a `cnf` claim is
